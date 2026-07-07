@@ -19,7 +19,9 @@ import {
   Medal, 
   Info,
   Loader2,
-  Trash2
+  Trash2,
+  LockKeyhole,
+  LogOut
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import Tesseract from 'tesseract.js';
@@ -28,6 +30,8 @@ import type { Employee, Submission } from './dbService';
 
 // Fallback image helper
 const DEFAULT_PREVIEW = 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=600';
+const ADMIN_EMAIL = 'admin@pea.co.th';
+const ADMIN_PASSWORD = 'Pea111*';
 
 function getFallbackCalories(activityType: string): number {
   void activityType;
@@ -794,6 +798,10 @@ export default function App() {
   // Toast State
   const [toast, setToast] = useState<{ title: string; desc: string; type: 'success' | 'error' } | null>(null);
   const toastTimeoutRef = useRef<number | null>(null);
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  const [adminLoginError, setAdminLoginError] = useState('');
 
   useEffect(() => {
     async function loadData() {
@@ -825,6 +833,27 @@ export default function App() {
   // Switch tabs
   const handleTabChange = (tab: typeof activeTab) => {
     setActiveTab(tab);
+  };
+
+  const handleAdminLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (adminEmail.trim().toLowerCase() === ADMIN_EMAIL && adminPassword === ADMIN_PASSWORD) {
+      setIsAdminAuthenticated(true);
+      setAdminLoginError('');
+      setAdminPassword('');
+      showToast('เข้าสู่หลังบ้านสำเร็จ', 'สามารถตรวจสอบและอนุมัติรายการกิจกรรมได้แล้ว', 'success');
+      return;
+    }
+
+    setAdminLoginError('อีเมลหรือรหัสผ่านไม่ถูกต้อง');
+  };
+
+  const handleAdminLogout = () => {
+    setIsAdminAuthenticated(false);
+    setAdminEmail('');
+    setAdminPassword('');
+    setActiveTab('company-dashboard');
+    showToast('ออกจากหลังบ้านแล้ว', 'กลับสู่หน้าผู้ใช้งานทั่วไป', 'success');
   };
 
   // Hashing Image logic for anti-cheat
@@ -1200,60 +1229,52 @@ CREATE TABLE submissions (
           </div>
         </div>
         
-        <nav className="flex flex-wrap bg-slate-950 p-1.5 rounded-xl border border-slate-800 gap-1">
-          <button 
-            onClick={() => handleTabChange('employee-form')} 
-            className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-300 ${
-              activeTab === 'employee-form' 
-                ? 'bg-emerald-500 text-slate-950 shadow-md' 
-                : 'text-slate-400 hover:text-slate-200'
+        <div className="flex items-center gap-2">
+          <nav className="flex flex-wrap bg-slate-950 p-1.5 rounded-xl border border-slate-800 gap-1">
+            <button 
+              onClick={() => handleTabChange('employee-form')} 
+              className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-300 ${
+                activeTab === 'employee-form' 
+                  ? 'bg-emerald-500 text-slate-950 shadow-md' 
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <UploadCloud className="h-4 w-4" />
+              <span>ส่งข้อมูลกิจกรรม</span>
+            </button>
+            
+            <button 
+              onClick={() => handleTabChange('company-dashboard')} 
+              className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-300 ${
+                activeTab === 'company-dashboard' 
+                  ? 'bg-emerald-500 text-slate-950 shadow-md' 
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <TrendingUp className="h-4 w-4" />
+              <span>แดชบอร์ดสุขภาพองค์กร</span>
+            </button>
+          </nav>
+
+          <button
+            type="button"
+            title="หลังบ้าน"
+            aria-label="เข้าสู่หลังบ้าน"
+            onClick={() => handleTabChange('admin-portal')}
+            className={`relative w-9 h-9 rounded-full border flex items-center justify-center transition-all ${
+              activeTab === 'admin-portal'
+                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                : 'border-slate-800 bg-slate-950/80 text-slate-600 hover:text-slate-300 hover:border-slate-700'
             }`}
           >
-            <UploadCloud className="h-4 w-4" />
-            <span>พนักงานส่งผลงาน</span>
-          </button>
-          
-          <button 
-            onClick={() => handleTabChange('company-dashboard')} 
-            className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-300 ${
-              activeTab === 'company-dashboard' 
-                ? 'bg-emerald-500 text-slate-950 shadow-md' 
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <TrendingUp className="h-4 w-4" />
-            <span>แดชบอร์ดกลาง & อันดับ</span>
-          </button>
-          
-          <button 
-            onClick={() => handleTabChange('admin-portal')} 
-            className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-300 relative ${
-              activeTab === 'admin-portal' 
-                ? 'bg-emerald-500 text-slate-950 shadow-md' 
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <ShieldCheck className="h-4 w-4" />
-            <span>หลังบ้านอนุมัติผล</span>
+            <LockKeyhole className="h-3.5 w-3.5" />
             {pendingQueue.length > 0 && (
-              <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-bold border-2 border-slate-900 animate-pulse">
+              <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[9px] min-w-4 h-4 px-1 rounded-full flex items-center justify-center font-bold border border-slate-900">
                 {pendingQueue.length}
               </span>
             )}
           </button>
-          
-          <button 
-            onClick={() => handleTabChange('system-spec')} 
-            className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-300 ${
-              activeTab === 'system-spec' 
-                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                : 'text-slate-400 hover:text-slate-200 border border-transparent'
-            }`}
-          >
-            <FileCode className="h-4 w-4" />
-            <span>📄 Spec</span>
-          </button>
-        </nav>
+        </div>
       </header>
 
       {/* CORE CONTENT */}
@@ -1750,6 +1771,7 @@ CREATE TABLE submissions (
 
             {/* TAB 3: ADMIN APPROVAL QUEUE */}
             {activeTab === 'admin-portal' && (
+              isAdminAuthenticated ? (
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 pb-6 border-b border-slate-800">
                   <div>
@@ -1761,13 +1783,23 @@ CREATE TABLE submissions (
                       ตรวจสอบความถูกต้องสอดคล้องของหลักฐานภาพนาฬิกา และตัดสินใจบันทึกคะแนนเข้าสู่ระบบส่วนกลาง
                     </p>
                   </div>
-                  <button 
-                    onClick={handleApproveAll}
-                    className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-emerald-500/10 transition-colors flex items-center gap-1.5"
-                  >
-                    <Check className="h-4 w-4 stroke-[3]" />
-                    <span>อนุมัติทั้งหมดในคิว ({pendingQueue.length})</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={handleApproveAll}
+                      className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-emerald-500/10 transition-colors flex items-center gap-1.5"
+                    >
+                      <Check className="h-4 w-4 stroke-[3]" />
+                      <span>อนุมัติทั้งหมดในคิว ({pendingQueue.length})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAdminLogout}
+                      className="px-3 py-2.5 bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-slate-200 font-bold text-xs rounded-xl border border-slate-800 transition-colors flex items-center gap-1.5"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      ออกจากระบบ
+                    </button>
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -1853,6 +1885,58 @@ CREATE TABLE submissions (
                   </table>
                 </div>
               </div>
+              ) : (
+              <div className="max-w-md mx-auto bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+                <div className="text-center mb-6">
+                  <div className="w-12 h-12 rounded-full bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto mb-3 text-emerald-400">
+                    <LockKeyhole className="h-5 w-5" />
+                  </div>
+                  <h2 className="text-xl font-bold text-slate-100 m-0">เข้าสู่หลังบ้าน</h2>
+                  <p className="text-xs text-slate-400 mt-2 mb-0">
+                    สำหรับผู้ดูแลระบบเพื่อตรวจสอบและอนุมัติข้อมูลกิจกรรม
+                  </p>
+                </div>
+
+                <form onSubmit={handleAdminLogin} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-2">อีเมลผู้ดูแลระบบ</label>
+                    <input
+                      type="email"
+                      value={adminEmail}
+                      onChange={(e) => setAdminEmail(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-100 focus:outline-none focus:border-emerald-500/60"
+                      placeholder="admin@pea.co.th"
+                      autoComplete="username"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-2">รหัสผ่าน</label>
+                    <input
+                      type="password"
+                      value={adminPassword}
+                      onChange={(e) => setAdminPassword(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-100 focus:outline-none focus:border-emerald-500/60"
+                      placeholder="••••••••"
+                      autoComplete="current-password"
+                    />
+                  </div>
+
+                  {adminLoginError && (
+                    <div className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-xl px-3 py-2">
+                      {adminLoginError}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    className="w-full bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold py-3 rounded-xl text-sm transition-colors"
+                  >
+                    เข้าสู่ระบบหลังบ้าน
+                  </button>
+                </form>
+              </div>
+              )
             )}
 
             {/* TAB 4: SYSTEM SPECIFICATION */}
