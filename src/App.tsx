@@ -30,10 +30,8 @@ import type { Employee, Submission } from './dbService';
 const DEFAULT_PREVIEW = 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=600';
 
 function getFallbackCalories(activityType: string): number {
-  if (activityType === 'วิ่ง') return Math.floor(Math.random() * 150) + 400;
-  if (activityType === 'เดิน') return Math.floor(Math.random() * 100) + 150;
-  if (activityType === 'ปั่นจักรยาน') return Math.floor(Math.random() * 150) + 500;
-  return Math.floor(Math.random() * 100) + 300;
+  void activityType;
+  return 0;
 }
 
 // ─── Image Pre-processing ────────────────────────────────────────────────────
@@ -751,6 +749,7 @@ export default function App() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [ocrLoading, setOcrLoading] = useState(false);
   const [ocrResultKcal, setOcrResultKcal] = useState<number | null>(null);
+  const [confirmedKcal, setConfirmedKcal] = useState('');
   const [ocrScannedDate, setOcrScannedDate] = useState('วันนี้ (ตรงตามข้อกำหนดเงื่อนไข)');
   const [isDateValid, setIsDateValid] = useState(true);
   const [ocrRawText, setOcrRawText] = useState('');
@@ -811,6 +810,7 @@ export default function App() {
     setImagePreview(URL.createObjectURL(file));
     setOcrLoading(true);
     setOcrResultKcal(null);
+    setConfirmedKcal('');
 
     try {
       // Calculate Image Hash
@@ -857,22 +857,24 @@ export default function App() {
           console.log('Focused calories override:', focusedCalories.value);
         }
         console.log('Detected kcal:', detectedKcal);
+        const usableDetectedKcal = detectedKcal >= 1 && detectedKcal <= 5000 ? detectedKcal : null;
 
         // Step 3 – validate date
         const dateCheck = parseDateFromText(cleanedText);
         setOcrRawText(focusedCalories ? `${text}\n\n[Focused Calories OCR]\n${focusedCalories.text}` : text);
         setIsDateValid(dateCheck.isValid);
         setOcrScannedDate(dateCheck.foundDateStr);
-        setOcrResultKcal(detectedKcal);
+        setOcrResultKcal(usableDetectedKcal);
+        setConfirmedKcal(usableDetectedKcal === null ? '' : String(usableDetectedKcal));
         setOcrLoading(false);
       }).catch(err => {
         console.error('Tesseract error, using fallback:', err);
-        const detectedKcal = getFallbackCalories(activityType);
 
         setIsDateValid(true);
-        setOcrRawText('(เกิดข้อผิดพลาดในการโหลดโมดูล OCR ท้องถิ่น สลับไปใช้โหมดคำนวณสถิติกึ่งอัตโนมัติ)');
-        setOcrResultKcal(detectedKcal);
-        setOcrScannedDate('วันนี้ (วิเคราะห์แบบกึ่งอัตโนมัติ)');
+        setOcrRawText('(เกิดข้อผิดพลาดในการโหลดโมดูล OCR ท้องถิ่น กรุณากรอกค่าแคลอรี่จากภาพด้วยตนเอง)');
+        setOcrResultKcal(null);
+        setConfirmedKcal('');
+        setOcrScannedDate('วันนี้ (กรุณาตรวจสอบจากภาพหลักฐาน)');
         setOcrLoading(false);
       });
 
@@ -886,6 +888,7 @@ export default function App() {
   const resetFormImage = () => {
     setImagePreview(null);
     setOcrResultKcal(null);
+    setConfirmedKcal('');
     setImageHash('');
     setIsDateValid(true);
     setOcrRawText('');
@@ -913,8 +916,9 @@ export default function App() {
       return;
     }
 
-    if (!ocrResultKcal) {
-      showToast('ข้อผิดพลาดระบบสแกน', 'กรุณารอระบบ OCR สกัดตัวเลขให้เสร็จสิ้นก่อนส่งผลงาน', 'error');
+    const confirmedKcalValue = Number(confirmedKcal);
+    if (!Number.isFinite(confirmedKcalValue) || confirmedKcalValue < 1 || confirmedKcalValue > 5000) {
+      showToast('กรุณายืนยันค่าแคลอรี่', 'ตรวจสอบตัวเลขจากภาพและกรอกค่าแคลอรี่ที่ถูกต้องก่อนส่งผลงาน', 'error');
       return;
     }
 
@@ -932,7 +936,7 @@ export default function App() {
       department: employee.department,
       division: employee.division,
       activityType,
-      kcal: ocrResultKcal,
+      kcal: Math.round(confirmedKcalValue),
       imageUrl: imagePreview || DEFAULT_PREVIEW,
       scannedDate: todayStr,
       status: 'pending' as const,
@@ -1140,6 +1144,9 @@ CREATE TABLE submissions (
   const searchApprovedKcal = searchSubmissions
     .filter(s => s.status === 'approved')
     .reduce((sum, s) => sum + s.kcal, 0);
+  const confirmedKcalValue = Number(confirmedKcal);
+  const hasValidConfirmedKcal = Number.isFinite(confirmedKcalValue) && confirmedKcalValue >= 1 && confirmedKcalValue <= 5000;
+  const canSubmitForm = hasValidConfirmedKcal && isDateValid && !!empIdInput.trim() && !!employees[empIdInput.trim().toUpperCase()];
 
   return (
     <div className="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between">
@@ -1332,6 +1339,7 @@ CREATE TABLE submissions (
                             setImagePreview('/sample_watch.png');
                             setOcrLoading(true);
                             setOcrResultKcal(null);
+                            setConfirmedKcal('');
                             try {
                               const response = await fetch('/sample_watch.png');
                               const blob = await response.blob();
@@ -1348,6 +1356,7 @@ CREATE TABLE submissions (
                               // Mock OCR result
                               setTimeout(() => {
                                 setOcrResultKcal(450);
+                                setConfirmedKcal('450');
                                 setIsDateValid(true);
                                 setOcrScannedDate('วันนี้ (ตรงตามเงื่อนไขส่งสถิติภายใน 24 ชม.)');
                                 setOcrRawText('Steps\nSunday, July 7\n13,775\n13.8 km\nDistance\n450 kcal\nBattery 100%');
@@ -1399,25 +1408,36 @@ CREATE TABLE submissions (
                       </div>
                     )}
 
-                    {ocrResultKcal !== null && (
+                    {imagePreview && !ocrLoading && (
                       <div className="bg-emerald-950/20 border border-emerald-500/20 p-5 rounded-xl space-y-4">
                         <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
                           <Package className="h-4 w-4" />
-                          ข้อมูลตรวจพบจากภาพถ่าย
+                          ตรวจสอบและยืนยันข้อมูลจากภาพถ่าย
                         </h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div className="bg-slate-950/60 p-4 rounded-lg border border-slate-800">
-                            <label className="block text-xs text-slate-400 mb-1">จำนวนพลังงานที่สกัดได้</label>
+                            <label className="block text-xs text-slate-400 mb-1">จำนวนพลังงานที่จะบันทึกจริง</label>
                             <div className="flex items-baseline gap-2">
                               <input 
                                 type="number" 
                                 required 
-                                value={ocrResultKcal}
-                                onChange={(e) => setOcrResultKcal(parseInt(e.target.value) || 0)}
-                                className="bg-transparent text-2xl font-bold text-emerald-400 focus:outline-none w-28 border-b border-dashed border-emerald-500/30"
+                                min="1"
+                                max="5000"
+                                value={confirmedKcal}
+                                onChange={(e) => setConfirmedKcal(e.target.value)}
+                                placeholder={ocrResultKcal === null ? 'กรอกเลข' : undefined}
+                                className="bg-transparent text-2xl font-bold text-emerald-400 focus:outline-none w-32 border-b border-dashed border-emerald-500/30"
                               />
                               <span className="text-sm text-slate-400 font-mono">kcal</span>
                             </div>
+                            <p className="mt-2 text-[11px] text-slate-500">
+                              {ocrResultKcal === null
+                                ? 'OCR ยังอ่านค่าไม่ได้ กรุณากรอกเลขจากภาพด้วยตนเอง'
+                                : `OCR เสนอค่า ${ocrResultKcal.toLocaleString()} kcal - แก้ไขได้ถ้าตัวเลขไม่ตรงภาพ`}
+                            </p>
+                            {!hasValidConfirmedKcal && (
+                              <p className="mt-2 text-[11px] text-rose-400">กรุณากรอกตัวเลข 1-5000 kcal ก่อนส่ง</p>
+                            )}
                           </div>
                           <div className={`bg-slate-950/60 p-4 rounded-lg border ${isDateValid ? 'border-slate-800' : 'border-rose-500/30'} flex flex-col justify-between`}>
                             <div>
@@ -1444,9 +1464,9 @@ CREATE TABLE submissions (
                     <div className="pt-4 flex justify-end gap-4">
                       <button 
                         type="submit" 
-                        disabled={ocrResultKcal === null || !isDateValid || !empIdInput.trim() || !employees[empIdInput.trim().toUpperCase()]} 
+                        disabled={!canSubmitForm} 
                         className={`px-8 py-3 rounded-xl font-bold text-sm transition-all duration-300 shadow-lg ${
-                          ocrResultKcal !== null && isDateValid && empIdInput.trim() && employees[empIdInput.trim().toUpperCase()]
+                          canSubmitForm
                             ? 'bg-emerald-500 hover:bg-emerald-600 text-slate-950 shadow-emerald-500/10 cursor-pointer transform hover:-translate-y-0.5 active:translate-y-0'
                             : 'bg-slate-800 text-slate-500 cursor-not-allowed'
                         }`}
