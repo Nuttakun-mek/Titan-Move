@@ -2,10 +2,10 @@
 
 body {
   background:
-    radial-gradient(circle at top left, rgba(198, 146, 20, 0.16), transparent 28rem),
-    radial-gradient(circle at top right, rgba(114, 36, 108, 0.38), transparent 32rem),
-    #160817;
-  color: #ffffff;
+    radial-gradient(circle at top left, rgba(198, 146, 20, 0.18), transparent 30rem),
+    radial-gradient(circle at top right, rgba(114, 36, 108, 0.12), transparent 34rem),
+    #ffffff;
+  color: #72246c;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
@@ -19,7 +19,7 @@ body {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #2a0d27;
+  background: #f6f1f5;
 }
 ::-webkit-scrollbar-thumb {
   background: #72246c;
