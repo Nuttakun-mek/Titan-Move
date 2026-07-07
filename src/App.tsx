@@ -283,18 +283,20 @@ export default function App() {
         setConfirmedKcal(String(calorieScan.value));
         showToast(
           'ตรวจพบค่า kcal จากภาพ',
-          `ระบบเสนอค่า ${calorieScan.value.toLocaleString()} kcal กรุณาตรวจเทียบกับภาพก่อนส่ง`,
+          `ระบบเสนอค่า ${calorieScan.value.toLocaleString()} kcal หากไม่ตรงให้แจ้งผู้ดูแลตรวจสอบ`,
           'success'
         );
       } else {
-        showToast('ยังไม่พบค่า kcal อัตโนมัติ', 'กรุณากรอกตัวเลขจากภาพด้วยตนเอง แล้วส่งให้ผู้ดูแลตรวจอนุมัติ', 'error');
+        setRequiresAdminReview(true);
+        showToast('ยังไม่พบค่า kcal อัตโนมัติ', 'ระบบจะส่งรายการให้ผู้ดูแลตรวจและกรอกค่า kcal ในหลังบ้าน', 'error');
       }
 
       setImageLoading(false);
     } catch (err) {
       console.error('Image upload error:', err);
       setImageLoading(false);
-      showToast('อ่านค่า kcal ไม่สำเร็จ', 'กรุณากรอกตัวเลขจากภาพด้วยตนเอง หรือแจ้งผู้ดูแลตรวจสอบก่อนอนุมัติ', 'error');
+      setRequiresAdminReview(true);
+      showToast('อ่านค่า kcal ไม่สำเร็จ', 'ระบบจะส่งรายการให้ผู้ดูแลตรวจและกรอกค่า kcal ในหลังบ้าน', 'error');
     }
   };
 
@@ -329,8 +331,9 @@ export default function App() {
     }
 
     const confirmedKcalValue = Number(confirmedKcal);
-    if (!Number.isFinite(confirmedKcalValue) || confirmedKcalValue < 1 || confirmedKcalValue > 5000) {
-      showToast('กรุณายืนยันค่าแคลอรี่', 'ตรวจสอบตัวเลขจากภาพและกรอกค่าแคลอรี่ที่ถูกต้องก่อนส่งผลงาน', 'error');
+    const hasDetectedKcal = Number.isFinite(confirmedKcalValue) && confirmedKcalValue >= 1 && confirmedKcalValue <= 5000;
+    if (!hasDetectedKcal && !requiresAdminReview) {
+      showToast('ยังไม่มีค่า kcal ที่ตรวจพบ', 'กรุณาอัปโหลดภาพใหม่ หรือส่งให้ผู้ดูแลตรวจค่า kcal ในหลังบ้าน', 'error');
       return;
     }
 
@@ -348,7 +351,7 @@ export default function App() {
       department: employee.department,
       division: employee.division,
       activityType,
-      kcal: Math.round(confirmedKcalValue),
+      kcal: hasDetectedKcal ? Math.round(confirmedKcalValue) : 0,
       imageUrl: imagePreview || DEFAULT_PREVIEW,
       scannedDate: todayStr,
       status: 'pending' as const,
@@ -465,7 +468,7 @@ export default function App() {
   const handleDownloadSpec = () => {
     const markdownPayload = `# Specification: FitVerify AI Tracker (ระบบบันทึกสถิติการออกกำลังกายพนักงาน)
 
-ระบบเว็บแอปพลิเคชันสถิติการออกกำลังกายภายในองค์กร รองรับการอัปโหลดภาพถ่ายหลักฐาน ระบบช่วยตรวจหาเฉพาะค่า calories/kcal จากภาพเพื่อเสนอให้ผู้ใช้ตรวจและแก้ไขได้ พร้อมระบบป้องกันการส่งรูปซ้ำ จัดอันดับตามโครงสร้าง ฝ่าย (Department), กอง (Division) และแสดงผลในรูปแบบ Interactive & Responsive Dashboard
+ระบบเว็บแอปพลิเคชันสถิติการออกกำลังกายภายในองค์กร รองรับการอัปโหลดภาพถ่ายหลักฐาน ระบบช่วยตรวจหาเฉพาะค่า calories/kcal จากภาพเพื่อเสนอให้ผู้ใช้ตรวจสอบ โดยผู้ดูแลเป็นผู้แก้ไขตัวเลขในหลังบ้านก่อนอนุมัติ พร้อมระบบป้องกันการส่งรูปซ้ำ จัดอันดับตามโครงสร้าง ฝ่าย (Department), กอง (Division) และแสดงผลในรูปแบบ Interactive & Responsive Dashboard
 
 ---
 
@@ -474,7 +477,7 @@ export default function App() {
 - **Version Control & CI/CD:** GitHub (เชื่อมต่อกับ Vercel เพื่อ Deploy อัตโนมัติ)
 - **Database, Auth & Storage:** Supabase (PostgreSQL Database + Storage สำหรับเก็บรูปหลักฐาน)
 - **Silent kcal Detection:** ระบบอ่านเฉพาะค่า calories/kcal จากภาพเพื่อเสนอเลขให้ผู้ใช้ โดยไม่แสดงข้อความ OCR ดิบ
-- **Manual Verification:** พนักงานตรวจและแก้ไขค่า kcal ได้ก่อนส่ง และรอผู้ดูแลระบบอนุมัติ
+- **Admin Verification:** พนักงานตรวจค่า kcal ที่ระบบพบได้ แต่การแก้ไขตัวเลขทำโดยผู้ดูแลระบบในหลังบ้านก่อนอนุมัติ
 
 ---
 
@@ -586,66 +589,24 @@ CREATE TABLE submissions (
     .reduce((sum, s) => sum + s.kcal, 0);
   const confirmedKcalValue = Number(confirmedKcal);
   const hasValidConfirmedKcal = Number.isFinite(confirmedKcalValue) && confirmedKcalValue >= 1 && confirmedKcalValue <= 5000;
-  const canSubmitForm = hasValidConfirmedKcal && !!imagePreview && !!empIdInput.trim() && !!employees[empIdInput.trim().toUpperCase()];
+  const canSubmitForm = !!imagePreview && !imageLoading && !!empIdInput.trim() && !!employees[empIdInput.trim().toUpperCase()] && (hasValidConfirmedKcal || requiresAdminReview);
 
   return (
     <div className="bg-[#F8F3F8] text-[#72246C] min-h-screen flex flex-col justify-between">
       
       {/* HEADER SECTION */}
-      <header className="bg-gradient-to-r from-[#72246C] via-[#8B317F] to-[#C69214] py-4 px-6 sticky top-0 z-50 shadow-xl shadow-[#72246C]/20">
-        <div className="flex flex-wrap justify-between items-center gap-4 max-w-7xl mx-auto">
-          <div className="flex items-center gap-4 min-w-0">
-            <img src="/pea-move.png" alt="PEA Titan Move" className="h-24 md:h-28 w-auto object-contain drop-shadow-xl shrink-0" />
-            <div className="min-w-0">
-              <h1 className="text-xl md:text-2xl font-black text-white m-0 leading-tight">
+      <header className="bg-gradient-to-r from-[#72246C] via-[#8B317F] to-[#C69214] py-4 px-3 md:px-6 shadow-xl shadow-[#72246C]/20 overflow-hidden">
+        <div className="max-w-7xl mx-auto flex justify-center">
+          <div className="flex items-center justify-center gap-[clamp(0.5rem,1.6vw,1.25rem)] min-w-0">
+            <img src="/pea-move.png" alt="PEA Titan Move" className="h-[clamp(4rem,18vw,9rem)] w-auto object-contain drop-shadow-xl shrink-0" />
+            <div className="min-w-0 text-left">
+              <h1 className="text-[clamp(0.82rem,3.6vw,2.25rem)] font-black text-white m-0 leading-tight whitespace-nowrap">
                 PEA Titan Move ย.ยักษ์ขยับนับแคลฯ
               </h1>
-              <p className="text-xs md:text-sm text-[#FFE6A2] mt-1 mb-0 font-semibold leading-relaxed">
+              <p className="text-[clamp(0.58rem,2.1vw,1.25rem)] text-[#FFE6A2] mt-1 md:mt-2 mb-0 font-semibold leading-tight whitespace-nowrap">
                 1 ก.ค. ถึง 24 ก.ย. 2569 ขยับวันนี้ เพื่อสุขภาพที่ดีของเรา
               </p>
             </div>
-          </div>
-        
-          <div className="flex items-center gap-2">
-          <nav className="flex flex-wrap bg-white/15 p-1.5 rounded-xl border border-white/25 gap-1 shadow-sm backdrop-blur">
-            <button 
-              onClick={() => handleTabChange('employee-form')} 
-              className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-300 ${
-                activeTab === 'employee-form' 
-                  ? 'bg-white text-[#72246C] shadow-md' 
-                  : 'text-white hover:bg-white/15'
-              }`}
-            >
-              <UploadCloud className="h-4 w-4" />
-              <span>ส่งข้อมูลกิจกรรม</span>
-            </button>
-            
-            <button 
-              onClick={() => handleTabChange('company-dashboard')} 
-              className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-300 ${
-                activeTab === 'company-dashboard' 
-                  ? 'bg-white text-[#72246C] shadow-md' 
-                  : 'text-white hover:bg-white/15'
-              }`}
-            >
-              <TrendingUp className="h-4 w-4" />
-              <span>แดชบอร์ดสุขภาพ</span>
-            </button>
-          </nav>
-
-          <button
-            type="button"
-            title="หลังบ้าน"
-            aria-label="เข้าสู่หลังบ้าน"
-            onClick={() => handleTabChange('admin-portal')}
-            className={`relative w-9 h-9 rounded-full border flex items-center justify-center transition-all ${
-              activeTab === 'admin-portal'
-                ? 'border-white bg-white text-[#72246C]'
-                : 'border-white/35 bg-white/10 text-white/75 hover:text-white hover:bg-white/20'
-            }`}
-          >
-            <Settings className="h-3.5 w-3.5" />
-          </button>
           </div>
         </div>
       </header>
@@ -659,6 +620,34 @@ CREATE TABLE submissions (
           </div>
         ) : (
           <>
+            <div className="mb-8 flex justify-center">
+              <nav className="inline-flex flex-wrap justify-center bg-[#72246C] p-1.5 rounded-2xl border border-[#C69214]/25 gap-1 shadow-xl shadow-[#72246C]/15">
+                <button
+                  onClick={() => handleTabChange('employee-form')}
+                  className={`px-5 py-3 rounded-xl text-sm font-bold flex items-center gap-2 transition-all duration-300 ${
+                    activeTab === 'employee-form'
+                      ? 'bg-white text-[#72246C] shadow-md'
+                      : 'text-white hover:bg-white/15'
+                  }`}
+                >
+                  <UploadCloud className="h-4 w-4" />
+                  <span>ส่งข้อมูลกิจกรรม</span>
+                </button>
+
+                <button
+                  onClick={() => handleTabChange('company-dashboard')}
+                  className={`px-5 py-3 rounded-xl text-sm font-bold flex items-center gap-2 transition-all duration-300 ${
+                    activeTab === 'company-dashboard'
+                      ? 'bg-white text-[#72246C] shadow-md'
+                      : 'text-white hover:bg-white/15'
+                  }`}
+                >
+                  <TrendingUp className="h-4 w-4" />
+                  <span>แดชบอร์ดสุขภาพ</span>
+                </button>
+              </nav>
+            </div>
+
             {/* ALERT BOX FOR MOCK STATUS */}
             {dbService.isMock && (
               <div className="mb-6 bg-[#C69214]/10 border border-[#C69214]/25 rounded-2xl p-4 flex items-center gap-3 text-xs text-[#72246C]">
@@ -676,10 +665,16 @@ CREATE TABLE submissions (
                   <div className="bg-gradient-to-br from-white via-white to-[#C69214]/10 border border-[#C69214]/20 p-6 rounded-2xl shadow-sm">
                     <h2 className="text-lg font-bold text-[#C69214] mb-3 flex items-center gap-2">
                       <Info className="h-4 w-4" /> 
-                      ระบบลงทะเบียนผลรายวัน
+                      ลงทะเบียนส่งข้อมูลกิจกรรม
                     </h2>
-                    <p className="text-xs text-[#72246C]/80 leading-relaxed">
-                      กรอกรหัสพนักงาน เลือกกิจกรรม แนบภาพหลักฐาน ระบบจะเสนอค่า kcal ที่ตรวจพบจากภาพให้ตรวจอีกครั้ง คุณสามารถแก้ไขตัวเลขหรือแจ้งให้ผู้ดูแลตรวจสอบก่อนอนุมัติได้
+                    <ol className="space-y-2 text-xs text-[#72246C]/80 leading-relaxed list-decimal list-inside">
+                      <li>กรอกรหัสพนักงาน เลือกกิจกรรม แนบภาพหลักฐาน</li>
+                      <li>ในรูปภาพต้องมีวันที่และเดือนระบุชัดเจน หากมีการออกกำลังกายมากกว่า 1 ครั้ง/วัน ให้ใช้รูปสรุปจำนวนแคลอรี่รวมทั้งหมดจากทุกช่วงเวลาในวันนั้น</li>
+                      <li>ระบบจะเสนอค่า kcal ที่ตรวจพบจากภาพให้ตรวจอีกครั้ง หากตัวเลขไม่ตรงหรืออ่านไม่พบ ให้ส่งให้ผู้ดูแลตรวจและแก้ไขก่อนอนุมัติ</li>
+                      <li>ไม่สามารถบันทึกข้อมูลการออกกำลังกายย้อนหลังได้ (บันทึกผลวันต่อวัน)</li>
+                    </ol>
+                    <p className="mt-4 rounded-xl border border-[#C69214]/20 bg-white/70 p-3 text-xs text-[#72246C]/75 leading-relaxed">
+                      ทั้งนี้ ในการลงข้อมูลหากตรวจสอบพบว่าการลงข้อมูลไม่ถูกต้องตามความเป็นจริงและไม่เป็นไปตามกติกา ขอสงวนสิทธิ์ในการลบข้อมูลออกจากระบบโดยมิต้องแจ้งให้ทราบล่วงหน้า
                     </p>
                   </div>
                 </div>
@@ -797,23 +792,22 @@ CREATE TABLE submissions (
                             <div className="flex items-baseline gap-2">
                               <input 
                                 type="number" 
-                                required 
                                 min="1"
                                 max="5000"
                                 value={confirmedKcal}
-                                onChange={(e) => setConfirmedKcal(e.target.value)}
-                                placeholder="กรอกเลข kcal"
-                                className="bg-transparent text-2xl font-bold text-[#C69214] focus:outline-none w-32 border-b border-dashed border-[#C69214]/30"
+                                readOnly
+                                placeholder="รอระบบตรวจ"
+                                className="bg-[#F8F3F8] text-2xl font-bold text-[#C69214] focus:outline-none w-36 border border-[#C69214]/20 rounded-lg px-3 py-1 cursor-not-allowed"
                               />
                               <span className="text-sm text-[#72246C]/65 font-mono">kcal</span>
                             </div>
                             <p className="mt-2 text-[11px] text-[#72246C]/45">
                               {detectedKcal?.value
-                                ? `ระบบเสนอค่า ${detectedKcal.value.toLocaleString()} kcal จากภาพ กรุณาตรวจเทียบก่อนส่ง และแก้ไขได้หากไม่ตรง`
-                                : 'หากระบบอ่านไม่พบ กรุณากรอกค่าจากภาพหลักฐานด้วยตนเองก่อนส่งข้อมูล'}
+                                ? `ระบบเสนอค่า ${detectedKcal.value.toLocaleString()} kcal จากภาพ ผู้ใช้ไม่สามารถแก้เลขนี้ได้ หากไม่ตรงให้แจ้งผู้ดูแลตรวจสอบ`
+                                : 'ระบบยังอ่านค่า kcal ไม่พบ รายการนี้จะถูกส่งให้ผู้ดูแลกรอก/แก้ไขในหลังบ้าน'}
                             </p>
-                            {!hasValidConfirmedKcal && (
-                              <p className="mt-2 text-[11px] text-rose-400">กรุณากรอกตัวเลข 1-5000 kcal ก่อนส่ง</p>
+                            {!hasValidConfirmedKcal && !requiresAdminReview && (
+                              <p className="mt-2 text-[11px] text-rose-400">ยังไม่มีค่า kcal ที่ตรวจพบ กรุณาอัปโหลดภาพใหม่หรือส่งให้ผู้ดูแลตรวจสอบ</p>
                             )}
                           </div>
                           <div className="bg-white p-4 rounded-lg border border-[#C69214]/20 flex flex-col justify-between">
@@ -839,15 +833,15 @@ CREATE TABLE submissions (
                               : 'border-[#72246C]/15 bg-[#F8F3F8] text-[#72246C]/75 hover:border-[#C69214]/45'
                           }`}
                         >
-                          <span className={`mt-0.5 h-5 w-5 rounded-full border flex items-center justify-center shrink-0 ${
-                            requiresAdminReview ? 'border-[#C69214] bg-[#C69214] text-white' : 'border-[#72246C]/25 bg-white'
-                          }`}>
+                            <span className={`mt-0.5 h-5 w-5 rounded-full border flex items-center justify-center shrink-0 ${
+                              requiresAdminReview ? 'border-[#C69214] bg-[#C69214] text-white' : 'border-[#72246C]/25 bg-white'
+                            }`}>
                             {requiresAdminReview && <Check className="h-3.5 w-3.5 stroke-[3]" />}
                           </span>
                           <span>
                             <span className="block text-sm font-bold">ให้ผู้ดูแลตรวจสอบและแก้ไขค่า kcal ก่อนอนุมัติ</span>
                             <span className="block text-xs mt-1 opacity-75">
-                              ใช้เมื่อไม่แน่ใจว่าตัวเลขที่กรอกตรงกับภาพหรือไม่ รายการนี้จะมีแจ้งเตือนในหลังบ้านให้แอดมินตรวจเลขก่อนกดอนุมัติ
+                              ใช้เมื่อไม่แน่ใจว่าตัวเลขที่ระบบตรวจพบตรงกับภาพหรือไม่ รายการนี้จะมีแจ้งเตือนในหลังบ้านให้แอดมินตรวจและแก้เลขก่อนกดอนุมัติ
                             </span>
                           </span>
                         </button>
@@ -1338,7 +1332,7 @@ CREATE TABLE submissions (
                       <li><b>Database Engines:</b> Supabase (PostgreSQL) Free Tier สำหรับข้อมูลหลักและอันดับคะแนน</li>
                       <li><b>Proof Storage Bucket:</b> Supabase Storage (เก็บไฟล์รูปหลักฐาน)</li>
                       <li><b>Silent kcal detection:</b> ระบบตรวจเฉพาะค่า calories/kcal จากภาพเพื่อเสนอเลขให้ผู้ใช้ โดยไม่แสดงข้อความ OCR ดิบ</li>
-                      <li><b>Manual kcal correction:</b> ผู้ใช้ตรวจและแก้ไขค่า kcal ได้ก่อนส่ง พร้อมตัวเลือกแจ้งผู้ดูแลให้ตรวจเลขก่อนอนุมัติ</li>
+                      <li><b>Admin kcal correction:</b> ผู้ใช้ตรวจดูค่า kcal ที่ระบบพบได้ แต่แก้ตัวเลขไม่ได้ หากไม่ตรงให้แจ้งผู้ดูแลแก้ไขในหลังบ้านก่อนอนุมัติ</li>
                       <li><b>Image Hashing:</b> SHA-256 (Web Crypto API) เพื่อป้องกันรูปเก่าส่งซ้ำ</li>
                     </ul>
                   </div>
@@ -1405,8 +1399,24 @@ CREATE TABLE submissions (
       )}
 
       {/* FOOTER */}
-      <footer className="bg-white border-t border-[#C69214]/20 py-4 text-center text-[#72246C]/45 text-xs">
-        <p className="m-0">2026 PEA Titan Move • All Rights Reserved</p>
+      <footer className="bg-white border-t border-[#C69214]/20 py-4 px-6 text-[#72246C]/45 text-xs">
+        <div className="max-w-7xl mx-auto grid grid-cols-[2.25rem_1fr_2.25rem] items-center gap-3">
+          <span aria-hidden="true"></span>
+          <p className="m-0 text-center">2026 PEA Titan Move • All Rights Reserved</p>
+          <button
+            type="button"
+            title="หลังบ้าน"
+            aria-label="เข้าสู่หลังบ้าน"
+            onClick={() => handleTabChange('admin-portal')}
+            className={`w-9 h-9 rounded-full border flex items-center justify-center justify-self-end transition-all ${
+              activeTab === 'admin-portal'
+                ? 'border-[#72246C] bg-[#72246C] text-white'
+                : 'border-[#C69214]/40 bg-white text-[#72246C]/55 hover:text-[#72246C] hover:border-[#72246C]/50 hover:bg-[#72246C]/5'
+            }`}
+          >
+            <Settings className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </footer>
     </div>
   );
