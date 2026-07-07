@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
-import { 
+import {
   Package, 
   UploadCloud, 
   TrendingUp, 
@@ -24,7 +24,6 @@ import {
   Settings
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import Tesseract from 'tesseract.js';
 import { dbService } from './dbService';
 import type { Employee, Submission } from './dbService';
 
@@ -32,748 +31,6 @@ import type { Employee, Submission } from './dbService';
 const DEFAULT_PREVIEW = 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=600';
 const ADMIN_EMAIL = 'admin@pea.co.th';
 const ADMIN_PASSWORD = 'Pea111*';
-
-function getFallbackCalories(activityType: string): number {
-  void activityType;
-  return 0;
-}
-
-// ฤฤฤ Image Pre-processing ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
-/** Render image to an off-screen canvas, convert to grayscale and boost contrast,
- *  then return a Blob suitable for Tesseract. This dramatically improves OCR on
- *  fitness-app screenshots that have coloured backgrounds. */
-async function preprocessImage(file: File): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      const ctx = canvas.getContext('2d')!;
-
-      // Draw original
-      ctx.drawImage(img, 0, 0);
-      URL.revokeObjectURL(url);
-
-      // Convert to grayscale + boost contrast
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const d = imageData.data;
-      const contrast = 1.5; // 1 = no change, >1 = more contrast
-      const intercept = 128 * (1 - contrast);
-      for (let i = 0; i < d.length; i += 4) {
-        const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-        const adjusted = Math.min(255, Math.max(0, contrast * gray + intercept));
-        d[i] = d[i + 1] = d[i + 2] = adjusted;
-      }
-      ctx.putImageData(imageData, 0, 0);
-
-      canvas.toBlob(blob => {
-        if (blob) resolve(blob);
-        else reject(new Error('Canvas toBlob failed'));
-      }, 'image/png');
-    };
-    img.onerror = reject;
-    img.src = url;
-  });
-}
-
-type FocusedCaloriesResult = {
-  value: number;
-  text: string;
-};
-
-type CropRegion = {
-  name: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  contrastThreshold?: number;
-  numberOnly?: boolean;
-  preferLargest?: boolean;
-  scale?: number;
-};
-
-const FITNESS_CALORIE_CROPS: CropRegion[] = [
-  { name: 'apple-health-calorie-digits-tight', x: 0.48, y: 0.505, width: 0.27, height: 0.075, numberOnly: true, preferLargest: true, scale: 8, contrastThreshold: 70 },
-  { name: 'apple-health-calorie-digits-wide', x: 0.44, y: 0.49, width: 0.34, height: 0.105, numberOnly: true, preferLargest: true, scale: 8, contrastThreshold: 70 },
-  { name: 'right-stat-card', x: 0.46, y: 0.43, width: 0.50, height: 0.20 },
-  { name: 'stats-row', x: 0.02, y: 0.42, width: 0.96, height: 0.24, preferLargest: true },
-  { name: 'middle-lower', x: 0.22, y: 0.34, width: 0.64, height: 0.32 },
-];
-
-function parseCaloriesFromFocusedText(text: string, preferLargest = false): number | null {
-  const normalized = normaliseCalorieText(text)
-    .replace(/(\d)\s*[,.]\s*(\d{3})\b/g, '$1$2')
-    .replace(/[|]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  const hasCaloriesLabel = /kcal|calories?|calorie|energy|burned?|แคล|พลังงาน/i.test(normalized);
-  const labeledPatterns = [
-    /(\d{2,5})\s*(?:kcal|calories?|calorie|cal\b|energy|burned?|แคล|พลังงาน)/i,
-    /(?:kcal|calories?|calorie|cal\b|energy|burned?|แคล|พลังงาน)\s*(\d{2,5})/i,
-  ];
-
-  for (const pattern of labeledPatterns) {
-    const match = normalized.match(pattern);
-    if (match) {
-      const value = parseInt(match[1], 10);
-      if (value >= 50 && value <= 5000) return value;
-    }
-  }
-
-  if (!hasCaloriesLabel && !preferLargest) return null;
-
-  const numbers = Array.from(normalized.matchAll(/\b\d{2,5}\b/g))
-    .map(match => parseInt(match[0], 10))
-    .filter(value => value >= 50 && value <= 5000);
-
-  if (numbers.length === 0) return null;
-  return Math.max(...numbers);
-}
-
-function correctKnownOcrConfusions(value: number, fullText: string, focusedText: string): number {
-  const context = `${fullText}\n${focusedText}`.toLowerCase();
-
-  // Apple Health dark-mode screenshots often render "2,869" in a small font.
-  // Tesseract can drop the comma and mistake the 6 for 0, producing 2809.
-  // Keep this correction intentionally narrow: only when the screenshot context
-  // looks like the same Steps/Distance/Calories layout from Apple Health.
-  if (
-    value === 2809 &&
-    /steps/.test(context) &&
-    /distance/.test(context) &&
-    /calories|kcal|cal\b/.test(context) &&
-    /13[.,]?\s*8\s*km|13\.8\s*km/.test(context)
-  ) {
-    return 2869;
-  }
-
-  return value;
-}
-
-async function createFocusedOcrBlob(file: File, region: CropRegion): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-
-    img.onload = () => {
-      const cropX = Math.max(0, Math.floor(img.naturalWidth * region.x));
-      const cropY = Math.max(0, Math.floor(img.naturalHeight * region.y));
-      const cropW = Math.min(img.naturalWidth - cropX, Math.floor(img.naturalWidth * region.width));
-      const cropH = Math.min(img.naturalHeight - cropY, Math.floor(img.naturalHeight * region.height));
-      const scale = region.scale ?? 4;
-
-      const canvas = document.createElement('canvas');
-      canvas.width = cropW * scale;
-      canvas.height = cropH * scale;
-
-      const ctx = canvas.getContext('2d')!;
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(url);
-
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data = imageData.data;
-
-      for (let i = 0; i < data.length; i += 4) {
-        const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-        const threshold = region.contrastThreshold ?? 90;
-        const boosted = gray > threshold ? 0 : 255;
-        data[i] = boosted;
-        data[i + 1] = boosted;
-        data[i + 2] = boosted;
-      }
-
-      ctx.putImageData(imageData, 0, 0);
-      canvas.toBlob(blob => {
-        if (blob) resolve(blob);
-        else reject(new Error(`Focused OCR crop failed: ${region.name}`));
-      }, 'image/png');
-    };
-
-    img.onerror = reject;
-    img.src = url;
-  });
-}
-
-async function recognizeFocusedCalories(file: File, fullText = ''): Promise<FocusedCaloriesResult | null> {
-  for (const region of FITNESS_CALORIE_CROPS) {
-    try {
-      const blob = await createFocusedOcrBlob(file, region);
-      const { data } = await Tesseract.recognize(blob, 'eng', {
-        logger: m => console.log(`Focused OCR (${region.name}):`, m),
-        ...(region.numberOnly
-          ? {
-              tessedit_char_whitelist: '0123456789,.',
-              tessedit_pageseg_mode: '7',
-            }
-          : {}),
-      });
-      const text = (data as any).text || '';
-      const parsedValue = parseCaloriesFromFocusedText(text, region.preferLargest);
-      const value = parsedValue === null ? null : correctKnownOcrConfusions(parsedValue, fullText, text);
-
-      console.log(`Focused OCR (${region.name}) text:`, text);
-      console.log(`Focused OCR (${region.name}) parsed kcal:`, value);
-
-      if (value !== null) {
-        return { value, text };
-      }
-    } catch (err) {
-      console.warn(`Focused OCR failed for ${region.name}:`, err);
-    }
-  }
-
-  return null;
-}
-
-// ฤฤฤ Calorie Synonym Normaliser ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
-/** Expand all known calorie synonyms to a single canonical token so that the
- *  scorer always sees "kcal" regardless of the OCR engine's output. */
-function normaliseCalorieText(text: string): string {
-  return text
-    // ฤฤ Label BEFORE number (common in fitness apps) ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
-    // "Calories: 250" / "Calories 250" / "Calorie 250"  "250 kcal"
-    .replace(/\bcalories?\s*:?\s*(\d[\d,.]*)/gi, '$1 kcal')
-    // "Energy: 250" / "Energy 250"  "250 kcal"
-    .replace(/\benergy\s*:?\s*(\d[\d,.]*)/gi, '$1 kcal')
-    // "Burned: 350" / "Burned 350"  "350 kcal"
-    .replace(/\bburned?\s*:?\s*(\d[\d,.]*)/gi, '$1 kcal')
-    // "Active Calories" / "Total Calories" labels  "kcal"
-    .replace(/\b(?:total|active|passive|resting|basal)\s+calories?\b/gi, 'kcal')
-    // ฤฤ Number BEFORE label ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
-    // "250 calories" / "250 calorie"  "250 kcal"
-    .replace(/(\d[\d,.]*)\s*calories?/gi, '$1 kcal')
-    // "250 Cal" (word boundary)  "250 kcal"
-    .replace(/(\d[\d,.]*)\s*Cal\b/g, '$1 kcal')
-    // "250 kCal"  "250 kcal"
-    .replace(/(\d[\d,.]*)\s*kCal\b/gi, '$1 kcal')
-    // ฤฤ Standalone labels (no adjacent number)  canonical kcal ฤฤฤฤฤฤฤฤฤฤฤฤฤ
-    .replace(/\bcalories?\b/gi, 'kcal')
-    .replace(/\benergy\b/gi, 'kcal')
-    .replace(/kCal/g, 'kcal')
-    // ฤฤ Thai labels ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
-    .replace(/\u0e1e\u0e25\u0e31\u0e07\u0e07\u0e32\u0e19\s*:?\s*(\d[\d,.]*)/g, '$1 kcal')
-    .replace(/\u0e1e\u0e25\u0e31\u0e07\u0e07\u0e32\u0e19/g, 'kcal')
-    .replace(/\u0e41\u0e04\u0e25(?:\u0e2d\u0e23\u0e35)?\s*:?\s*(\d[\d,.]*)/g, '$1 kcal')
-    .replace(/\u0e41\u0e04\u0e25(?:\u0e2d\u0e23\u0e35)?/g, 'kcal');
-}
-
-
-// ฤฤฤ Smart Calorie Extractor ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
-function extractSmartCalories(cleanedText: string, originalText: string, activityType: string, words: any[]): number {
-  // Normalise all synonyms FIRST so every downstream check only needs 'kcal'
-  const normText = normaliseCalorieText(cleanedText);
-  const normOriginal = normaliseCalorieText(originalText);
-
-  const calorieKeywords = ['kcal', 'calories', 'calorie', 'cal', 'burned', 'burn', 'แคล', 'พลังงาน'];
-  const penaltyKeywords = ['steps', 'step', 'km', 'meter', 'meters', 'ก้าว', 'กม', 'นาที', 'min', 'mins', '%'];
-
-  // ออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออ
-  // PRIMARY: Spatial nearest-neighbour using Tesseract bounding boxes
-  // ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
-  // Algorithm (as requested):
-  //  1. Find every word whose text IS or CONTAINS "calories" / "kcal"
-  //  2. Build a pool of NUMBER words (handles comma-thousands like "2,869")
-  //  3. Score each number by pixel distance in each of the 4 directions
-  //  4. Return the number with the shortest distance to any calorie keyword
-  // ออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออ
-  if (words && words.length > 0) {
-    // ฤฤ Step 1: Locate calorie keyword words ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
-    const calWordRe = /calories?|kcal|\bkal\b|\u0e41\u0e04\u0e25|\u0e1e\u0e25\u0e31\u0e07\u0e07\u0e32\u0e19/i;
-    const kwWords = (words as any[]).filter(
-      w => w.bbox && w.text && calWordRe.test(w.text)
-    );
-    console.log('Spatial – keyword words found:', kwWords.map((w: any) => w.text));
-
-    // ฤฤ Step 2: Build a number pool ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
-    // Each entry may span multiple adjacent word tokens (e.g. "2," + "869").
-    // We also accept single-token numbers like "2869" or "2,869".
-    type NumEntry = { value: number; cx: number; cy: number; text: string };
-    const numPool: NumEntry[] = [];
-
-    const sortedByX = [...(words as any[])].filter(w => w.bbox && w.text).sort(
-      (a: any, b: any) => a.bbox.x0 - b.bbox.x0
-    );
-
-    // Single-token: word text that, after comma removal, is a pure integer
-    (words as any[]).forEach((w: any) => {
-      if (!w.bbox || !w.text) return;
-      const raw = w.text.replace(/,/g, '');
-      if (!/^\d+$/.test(raw)) return;
-      const n = parseInt(raw, 10);
-      if (n < 50 || n > 9999) return; // skip token
-      numPool.push({
-        value: n,
-        cx: (w.bbox.x0 + w.bbox.x1) / 2,
-        cy: (w.bbox.y0 + w.bbox.y1) / 2,
-        text: w.text,
-      });
-    });
-
-    // Multi-token: consecutive words on the same row that together form a number
-    // e.g. ["2,", "869"]  2869  or  ["1", ",", "250"]  1250
-    const rowTolerance = 20; // px – words within 20px vertically are "same row"
-    for (let i = 0; i < sortedByX.length - 1; i++) {
-      const wa = sortedByX[i] as any;
-      const wb = sortedByX[i + 1] as any;
-      if (!wa.bbox || !wb.bbox) continue;
-      const yCenA = (wa.bbox.y0 + wa.bbox.y1) / 2;
-      const yCenB = (wb.bbox.y0 + wb.bbox.y1) / 2;
-      if (Math.abs(yCenA - yCenB) > rowTolerance) continue; // different rows
-      const gap = wb.bbox.x0 - wa.bbox.x1;
-      if (gap > 40) continue; // too far apart
-      const combined = (wa.text + wb.text).replace(/[\s,]/g, '');
-      if (!/^\d+$/.test(combined)) continue;
-      const n = parseInt(combined, 10);
-      if (n < 50 || n > 9999) continue; // skip pair
-      const cx = (wa.bbox.x0 + wb.bbox.x1) / 2;
-      const cy = (yCenA + yCenB) / 2;
-      numPool.push({ value: n, cx, cy, text: wa.text + wb.text });
-    }
-
-    console.log('Spatial – number pool:', numPool.map((e: NumEntry) => `${e.text}=${e.value}`));
-
-    // ฤฤ Step 3: Score by directional proximity ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
-    if (kwWords.length > 0 && numPool.length > 0) {
-      let bestVal = -1;
-      let bestDist = Infinity;
-
-      kwWords.forEach((kw: any) => {
-        const kwCx = (kw.bbox.x0 + kw.bbox.x1) / 2;
-        const kwCy = (kw.bbox.y0 + kw.bbox.y1) / 2;
-        const kwW  = kw.bbox.x1 - kw.bbox.x0;
-        const kwH  = kw.bbox.y1 - kw.bbox.y0;
-
-        numPool.forEach((entry: NumEntry) => {
-          // Directional bounding-box distance:
-          // – if the number is directly above/below the keyword  use vertical gap
-          // – if to left/right  use horizontal gap
-          // – diagonal  Euclidean
-          const dx = Math.max(0, Math.abs(entry.cx - kwCx) - kwW / 2);
-          const dy = Math.max(0, Math.abs(entry.cy - kwCy) - kwH / 2);
-          const dist = Math.hypot(dx, dy);
-
-          console.log(`Spatial – "${entry.text}"(${entry.value}) dist to "${kw.text}": ${dist.toFixed(0)}px`);
-
-          if (dist < bestDist) {
-            bestDist = dist;
-            bestVal = entry.value;
-          }
-        });
-      });
-
-      if (bestVal >= 50) {
-        console.log('? Spatial nearest-neighbour result:', bestVal, '(dist:', bestDist.toFixed(0), 'px)');
-        return bestVal;
-      }
-    }
-  }
-
-  if (!words || words.length === 0) {
-    // Fall back to regex-only on normalised text
-    const directMatch = normText.match(/(\d{2,5})\s*kcal/i);
-    if (directMatch) return parseInt(directMatch[1], 10);
-    return getFallbackCalories(activityType);
-  }
-
-  // ฤฤ PHASE 0: Line-context search on raw text (most robust for multi-line) ฤฤฤ
-  // Split by newline and find lines that contain a calorie keyword.
-  // Then scan a ?1 line window for numbers in the calorie range.
-  // This catches the common fitness layout:
-  //   "13.8 km  2,869"    line with number (no keyword)
-  //   "Distance Calories"  line with keyword (no number)
-  const textLines = originalText.split(/\r?\n/);
-  for (let li = 0; li < textLines.length; li++) {
-    if (/calories?|kcal|\bkal\b|\u0e41\u0e04\u0e25|\u0e1e\u0e25\u0e31\u0e07\u0e07\u0e32\u0e19/i.test(textLines[li])) {
-      // Combine current line ? 1 neighbour into a single search window
-      const window0 = [
-        textLines[li - 1] ?? '',
-        textLines[li],
-        textLines[li + 1] ?? '',
-      ].join(' ');
-      console.log('Phase 0 – keyword line found. window:', window0);
-
-      const re0 = /\d[\d,]*/g;
-      let m0: RegExpExecArray | null;
-      const cands0: number[] = [];
-      while ((m0 = re0.exec(window0)) !== null) {
-        // Strip commas so "2,869"  2869
-        const n = parseInt(m0[0].replace(/,/g, ''), 10);
-        if (n >= 100 && n <= 9999) cands0.push(n);
-      }
-      if (cands0.length > 0) {
-        const best0 = Math.max(...cands0);
-        console.log('Phase 0 – line-context match:', best0, '| candidates:', cands0);
-        return best0;
-      }
-    }
-  }
-
-  // ฤฤ PHASE 1: Direct regex on normalised text (highest confidence) ฤฤฤฤฤฤฤฤฤฤ
-  // After normalisation "250 calories"  "250 kcal", so this catches everything.
-  const directKcalMatch = normText.match(/(\d{1,5}(?:[,.]\d+)?)\s*kcal/i);
-  if (directKcalMatch) {
-    const val = parseInt(directKcalMatch[1].replace(/[,.]/g, ''), 10);
-    if (val >= 50 && val <= 5000) {
-      console.log('Phase 1 – direct kcal match:', val);
-      return val;
-    }
-  }
-
-  // ฤฤ PHASE 2: Row-based spatial grouping ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
-  // Group words into rows by their vertical centre (y_mid) with a tolerance of
-  // ?half line-height. This is more reliable than column grouping for fitness
-  // screenshots where values appear BESIDE labels on the same line.
-  const validWords = [...words].filter(w => w.bbox && w.text?.trim());
-  validWords.sort((a, b) => a.bbox.y0 - b.bbox.y0);
-
-  const rows: { words: any[]; y0: number; y1: number }[] = [];
-  validWords.forEach(word => {
-    const yMid = (word.bbox.y0 + word.bbox.y1) / 2;
-    const matched = rows.find(r => {
-      const rMid = (r.y0 + r.y1) / 2;
-      const lineH = Math.max(r.y1 - r.y0, word.bbox.y1 - word.bbox.y0, 1);
-      return Math.abs(yMid - rMid) < lineH * 0.75;
-    });
-    if (matched) {
-      matched.words.push(word);
-      matched.y0 = Math.min(matched.y0, word.bbox.y0);
-      matched.y1 = Math.max(matched.y1, word.bbox.y1);
-    } else {
-      rows.push({ words: [word], y0: word.bbox.y0, y1: word.bbox.y1 });
-    }
-  });
-
-  // Sort each row's words left-to-right
-  rows.forEach(r => r.words.sort((a, b) => a.bbox.x0 - b.bbox.x0));
-
-  // Build clean text for each row:
-  // 1. Merge OCR-split comma tokens: "1 , 250"  "1250"
-  // 2. Collapse comma-thousands: "1,250"  "1250"
-  // 3. Normalise calorie synonyms
-  const buildRowText = (r: { words: any[] }): string => {
-    const raw = r.words.map(w => w.text).join(' ');
-    const mergedComma = raw.replace(/(\d)\s*,\s*(\d)/g, '$1$2');
-    const collapsed = mergedComma.replace(/(\d+),(\d{3})\b/g, '$1$2');
-    return normaliseCalorieText(collapsed);
-  };
-
-  const rowTexts = rows.map(r => ({
-    text: buildRowText(r),
-    words: r.words,
-    y0: r.y0,
-    y1: r.y1,
-  }));
-
-  console.log('Row groups for OCR:', rowTexts);
-
-  // ฤฤ PHASE 2a: Same-row "number + kcal"  highest priority ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
-  // Reuse rowExtractNum once it's defined below — we inline the same logic here
-  // to pick the LARGEST valid number in the kcal row (not the first match).
-  for (const row of rowTexts) {
-    if (/kcal/i.test(row.text)) {
-      const re2a = /\d{2,5}/g;
-      let m2a: RegExpExecArray | null;
-      const found2a: number[] = [];
-      while ((m2a = re2a.exec(row.text)) !== null) {
-        const v = parseInt(m2a[0], 10);
-        if (v >= 50 && v <= 5000) found2a.push(v);
-      }
-      if (found2a.length > 0) {
-        const best2a = Math.max(...found2a);
-        console.log('Phase 2a – same-row kcal match:', best2a, '| row:', row.text);
-        return best2a;
-      }
-    }
-  }
-
-  // ฤฤ PHASE 2b: Cross-row pair – number on one line, label on adjacent line ฤฤฤ
-  const rowHasKcal = (r?: typeof rowTexts[0]) => /kcal/i.test(r?.text ?? '');
-
-  /**
-   * Extract the BEST calorie candidate from a row.
-   * Uses exec() loop instead of matchAll() for broader TS compatibility.
-   * Filters to the valid calorie range (50–5000) and returns the largest.
-   */
-  const rowExtractNum = (r?: typeof rowTexts[0]): number => {
-    if (!r) return -1;
-    const re = /\d{2,5}/g;
-    let m: RegExpExecArray | null;
-    const found: number[] = [];
-    while ((m = re.exec(r.text)) !== null) {
-      const n = parseInt(m[0], 10);
-      if (n >= 50 && n <= 5000) found.push(n);
-    }
-    return found.length > 0 ? Math.max(...found) : -1;
-  };
-
-  for (let i = 0; i < rowTexts.length; i++) {
-    const cur  = rowTexts[i];
-    const next = rowTexts[i + 1];
-
-    // Pattern A: current row is label, next row is number
-    if (rowHasKcal(cur) && next) {
-      const val = rowExtractNum(next);
-      if (val >= 50 && val <= 5000) {
-        console.log(`Phase 2b – label[${i}] then number[${i+1}]:`, val);
-        return val;
-      }
-    }
-
-    // Pattern B: current row is number, next row is label
-    if (!rowHasKcal(cur) && next && rowHasKcal(next)) {
-      const val = rowExtractNum(cur);
-      if (val >= 50 && val <= 5000) {
-        console.log(`Phase 2b – number[${i}] then label[${i+1}]:`, val);
-        return val;
-      }
-    }
-  }
-
-  // ฤฤ PHASE 2c: Spatial proximity using bounding boxes (most robust) ฤฤฤฤฤฤฤฤฤฤ
-  // Finds each "calorie" keyword word in the OCR result, then picks the
-  // nearest valid number word by pixel distance. Handles any layout:
-  //   - number left / label right
-  //   - label above / number below
-  //   - two-column (number top-right, label bottom-right)  the common case
-  // numWordRe: match a token that is purely digits (after stripping commas/dots)
-  // Handles "2,869"  clean "2869"  4 digits ?
-  const numWordRe = /^\d{2,6}$/;
-
-  // Collect all number words (including comma-formatted like "2,869")
-  const numWords = validWords.filter(w => {
-    const clean = w.text.replace(/[,.\s]/g, '');
-    if (!numWordRe.test(clean)) return false;
-    const n = parseInt(clean, 10);
-    return n >= 50 && n <= 10000; // allow up to 10k for safety
-  });
-  // Use partial match so "Calories.", "CALORIES", etc. all trigger Phase 2c
-  const kwWords = validWords.filter(w =>
-    /calories?|kcal|\bcal\b|burned?|energy|พลังงาน|แคล/i.test(w.text)
-  );
-
-  if (kwWords.length > 0 && numWords.length > 0) {
-    let bestVal = -1;
-    let bestDist = Infinity;
-
-    kwWords.forEach(kw => {
-      const kwCx = (kw.bbox.x0 + kw.bbox.x1) / 2;
-      const kwCy = (kw.bbox.y0 + kw.bbox.y1) / 2;
-
-      numWords.forEach(nw => {
-        const clean = nw.text.replace(/[,.\s]/g, '');
-        const n = parseInt(clean, 10);
-        if (n < 50 || n > 5000) return;
-
-        const nwCx = (nw.bbox.x0 + nw.bbox.x1) / 2;
-        const nwCy = (nw.bbox.y0 + nw.bbox.y1) / 2;
-        const dist = Math.hypot(kwCx - nwCx, kwCy - nwCy);
-
-        if (dist < bestDist) {
-          bestDist = dist;
-          bestVal = n;
-        }
-      });
-    });
-
-    if (bestVal >= 50) {
-      console.log('Phase 2c – spatial proximity:', bestVal, '(dist:', bestDist, 'px)');
-      return bestVal;
-    }
-  }
-
-  // ฤฤ PHASE 3: Fallback scoring (original algorithm on normalised text) ฤฤฤฤฤฤฤ
-  const numRegex = /\b\d{2,5}\b/g;
-  const matches = normText.match(numRegex);
-
-  if (!matches || matches.length === 0) {
-    return getFallbackCalories(activityType);
-  }
-
-  // Re-use old column logic on row texts for backward compatibility
-  const columnTexts = rowTexts;
-
-  const candidates = Array.from(new Set(matches.map(Number)));
-  let bestCandidate = 0;
-  let highestScore = -9999;
-
-  candidates.forEach(num => {
-    let score = 0;
-    const numStr = num.toString();
-
-    // Range scoring — treat all plausible calorie values equally to avoid
-    // the old bias that favoured 150-1200 over larger values like 2869.
-    if (num >= 150 && num <= 5000) {
-      score += 50;   // equal chance for any plausible calorie
-    } else if (num >= 50 && num < 150) {
-      score += 10;
-    } else {
-      score -= 50;
-    }
-
-    // Column-proximity check
-    columnTexts.forEach(col => {
-      const colCleaned = col.text.toLowerCase();
-      if (colCleaned.includes(numStr)) {
-        const colHasCalKeyword = calorieKeywords.some(kw => colCleaned.includes(kw));
-        if (colHasCalKeyword) {
-          score += 1000; // Shared column with calorie keyword!
-          console.log(`Candidate ${num}: Shared column with calorie keyword. colText: "${col.text}"`);
-        }
-
-        const colHasPenaltyKeyword = penaltyKeywords.some(kw => colCleaned.includes(kw));
-        if (colHasPenaltyKeyword) {
-          // Soft penalty: the number might legitimately share a row with km/steps
-          // (e.g. "13.8 km  2,869" — km is in the label column, not the value)
-          score -= 80;
-          console.log(`Candidate ${num}: Shared row with penalty keyword. colText: "${col.text}"`);
-        }
-      }
-    });
-
-    // Global Proximity Check (as fallback)
-    const index = normText.indexOf(numStr);
-    if (index !== -1) {
-      let minCalDist = 9999;
-      calorieKeywords.forEach(kw => {
-        let kwIdx = -1;
-        while ((kwIdx = normText.indexOf(kw, kwIdx + 1)) !== -1) {
-          const dist = Math.abs(kwIdx - index);
-          if (dist < minCalDist) minCalDist = dist;
-        }
-      });
-      if (minCalDist < 40) score += 100;
-    }
-
-    // Exclude times and battery percent
-    const patternTime = new RegExp(`\\b\\d{1,2}:\\d{2}\\b`);
-    const timeMatch = normOriginal.match(patternTime);
-    if (timeMatch && timeMatch[0].replace(':', '') === numStr) {
-      score -= 300;
-    }
-
-    const pctIndex = normOriginal.indexOf(numStr + '%');
-    const pctIndexSpace = normOriginal.indexOf(numStr + ' %');
-    if (pctIndex !== -1 || pctIndexSpace !== -1) {
-      score -= 300;
-    }
-
-    console.log(`Candidate ${num}: Total Score = ${score}`);
-
-    if (score > highestScore) {
-      highestScore = score;
-      bestCandidate = num;
-    }
-  });
-
-  if (highestScore < 0 || bestCandidate === 0) {
-    return getFallbackCalories(activityType);
-  }
-
-  return bestCandidate;
-}
-
-function checkDateCloseness(parsedDate: Date, dateStr: string): { isValid: boolean; foundDateStr: string } {
-  const today = new Date();
-  const parsedMidnight = new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate());
-  const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-
-  const diffTime = Math.abs(todayMidnight.getTime() - parsedMidnight.getTime());
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-  if (parsedMidnight.getTime() > todayMidnight.getTime()) {
-    return { isValid: false, foundDateStr: `วันที่ในอนาคต: ${dateStr}` };
-  }
-  
-  if (diffDays > 1) {
-    return { isValid: false, foundDateStr: `ตรวจพบวันที่ ${dateStr} (ย้อนหลังเกินกำหนด)` };
-  }
-
-  return { isValid: true, foundDateStr: `ตรงตามกำหนด (${dateStr})` };
-}
-
-function parseDateFromText(text: string): { isValid: boolean; foundDateStr: string } {
-  const cleanText = text.toLowerCase();
-  
-  const months = [
-    'january', 'february', 'march', 'april', 'may', 'june', 
-    'july', 'august', 'september', 'october', 'november', 'december'
-  ];
-  const shortMonths = [
-    'jan', 'feb', 'mar', 'apr', 'may', 'jun', 
-    'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
-  ];
-  const thaiMonths = [
-    'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 
-    'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
-  ];
-  const shortThaiMonths = [
-    'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 
-    'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
-  ];
-
-  const today = new Date();
-  const currentYear = today.getFullYear();
-
-  for (let i = 0; i < 12; i++) {
-    const monthName = months[i];
-    const shortMonthName = shortMonths[i];
-    
-    const pattern1 = new RegExp(`\\b(${monthName}|${shortMonthName})\\s*(\\d{1,2})\\b`, 'i');
-    const match1 = cleanText.match(pattern1);
-    if (match1) {
-      const day = parseInt(match1[2]);
-      const parsedDate = new Date(currentYear, i, day);
-      return checkDateCloseness(parsedDate, `${months[i]} ${day}`);
-    }
-
-    const pattern2 = new RegExp(`\\b(\\d{1,2})\\s*(${monthName}|${shortMonthName})\\b`, 'i');
-    const match2 = cleanText.match(pattern2);
-    if (match2) {
-      const day = parseInt(match2[1]);
-      const parsedDate = new Date(currentYear, i, day);
-      return checkDateCloseness(parsedDate, `${day} ${months[i]}`);
-    }
-  }
-
-  for (let i = 0; i < 12; i++) {
-    const thaiMonth = thaiMonths[i];
-    const shortThaiMonth = shortThaiMonths[i].replace('.', '\\.');
-
-    const pattern1 = new RegExp(`(\\d{1,2})\\s*(${thaiMonth}|${shortThaiMonth})`, 'i');
-    const match1 = cleanText.match(pattern1);
-    if (match1) {
-      const day = parseInt(match1[1]);
-      const parsedDate = new Date(currentYear, i, day);
-      return checkDateCloseness(parsedDate, `${day} ${thaiMonths[i]}`);
-    }
-  }
-
-  const isoMatch = cleanText.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
-  if (isoMatch) {
-    const year = parseInt(isoMatch[1]);
-    const month = parseInt(isoMatch[2]) - 1;
-    const day = parseInt(isoMatch[3]);
-    const parsedDate = new Date(year, month, day);
-    return checkDateCloseness(parsedDate, `${year}-${month+1}-${day}`);
-  }
-
-  const slashMatch = cleanText.match(/(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})/);
-  if (slashMatch) {
-    const day = parseInt(slashMatch[1]);
-    const month = parseInt(slashMatch[2]) - 1;
-    let year = parseInt(slashMatch[3]);
-    if (year < 100) year += 2000;
-    const parsedDate = new Date(year, month, day);
-    return checkDateCloseness(parsedDate, `${day}/${month+1}/${year}`);
-  }
-
-  return { isValid: true, foundDateStr: 'ไม่พบวันที่ในหลักฐาน (ข้ามการตรวจสอบ)' };
-}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'employee-form' | 'company-dashboard' | 'admin-portal' | 'system-spec'>('company-dashboard');
@@ -784,12 +41,8 @@ export default function App() {
   const [empIdInput, setEmpIdInput] = useState('');
   const [activityType, setActivityType] = useState('วิ่ง');
   const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [ocrLoading, setOcrLoading] = useState(false);
-  const [ocrResultKcal, setOcrResultKcal] = useState<number | null>(null);
+  const [imageLoading, setImageLoading] = useState(false);
   const [confirmedKcal, setConfirmedKcal] = useState('');
-  const [ocrScannedDate, setOcrScannedDate] = useState('วันนี้ (ตรงตามข้อกำหนดเงื่อนไข)');
-  const [isDateValid, setIsDateValid] = useState(true);
-  const [ocrRawText, setOcrRawText] = useState('');
   const [imageHash, setImageHash] = useState('');
 
   // Search State
@@ -864,96 +117,39 @@ export default function App() {
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
   };
 
-  // Handle OCR scanning using real Tesseract.js client-side engine with fallback
+  // Handle proof image upload and duplicate-image hashing.
   const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setImagePreview(URL.createObjectURL(file));
-    setOcrLoading(true);
-    setOcrResultKcal(null);
+    setImageLoading(true);
     setConfirmedKcal('');
 
     try {
-      // Calculate Image Hash
       const hash = await calculateHash(file);
       setImageHash(hash);
 
-      // Check if image is duplicate immediately
       const isDuplicate = submissions.some(s => s.imageHash === hash);
       if (isDuplicate) {
         showToast('ตรวจพบรูปภาพซ้ำซ้อน', 'รูปภาพหลักฐานนี้เคยถูกอัปโหลดในระบบแล้ว กรุณาอัปโหลดรูปภาพใหม่เพื่อป้องกันการทุจริต', 'error');
         resetFormImage();
-        setOcrLoading(false);
+        setImageLoading(false);
         return;
       }
 
-      // Pre-process image (grayscale + contrast) before OCR for better accuracy
-      let ocrSource: File | Blob = file;
-      try {
-        ocrSource = await preprocessImage(file);
-        console.log('Image pre-processed: grayscale + contrast boost applied');
-      } catch (ppErr) {
-        console.warn('Pre-processing failed, using original image:', ppErr);
-      }
-
-      // Run client-side Tesseract OCR
-      Tesseract.recognize(
-        ocrSource,
-        'eng',
-        { logger: m => console.log('Tesseract:', m) }
-      ).then(async ({ data }) => {
-        const text = (data as any).text || '';
-        const words = (data as any).words || [];
-        console.log('OCR Raw Text:', text);
-
-        // Step 1 – remove formatting separators so "13,775"  "13775"
-        const cleanedText = text.replace(/(\d+)[,.](\d+)/g, '$1$2');
-        console.log('Cleaned OCR Text:', cleanedText);
-
-        // Step 2 – smart extraction with synonym normalisation + row grouping
-        let detectedKcal = extractSmartCalories(cleanedText, text, activityType, words);
-        const focusedCalories = await recognizeFocusedCalories(file, text);
-        if (focusedCalories) {
-          detectedKcal = focusedCalories.value;
-          console.log('Focused calories override:', focusedCalories.value);
-        }
-        console.log('Detected kcal:', detectedKcal);
-        const usableDetectedKcal = detectedKcal >= 1 && detectedKcal <= 5000 ? detectedKcal : null;
-
-        // Step 3 – validate date
-        const dateCheck = parseDateFromText(cleanedText);
-        setOcrRawText(focusedCalories ? `${text}\n\n[Focused Calories OCR]\n${focusedCalories.text}` : text);
-        setIsDateValid(dateCheck.isValid);
-        setOcrScannedDate(dateCheck.foundDateStr);
-        setOcrResultKcal(usableDetectedKcal);
-        setConfirmedKcal(usableDetectedKcal === null ? '' : String(usableDetectedKcal));
-        setOcrLoading(false);
-      }).catch(err => {
-        console.error('Tesseract error, using fallback:', err);
-
-        setIsDateValid(true);
-        setOcrRawText('(เกิดข้อผิดพลาดในการโหลดโมดูล OCR ท้องถิ่น กรุณากรอกค่าแคลอรี่จากภาพด้วยตนเอง)');
-        setOcrResultKcal(null);
-        setConfirmedKcal('');
-        setOcrScannedDate('วันนี้ (กรุณาตรวจสอบจากภาพหลักฐาน)');
-        setOcrLoading(false);
-      });
-
+      setImageLoading(false);
     } catch (err) {
-      console.error('OCR Error:', err);
-      setOcrLoading(false);
-      showToast('เกิดข้อผิดพลาดในการวิเคราะห์รูปภาพ', 'กรุณาลองใหม่อีกครั้ง', 'error');
+      console.error('Image upload error:', err);
+      setImageLoading(false);
+      showToast('เกิดข้อผิดพลาดในการเตรียมรูปภาพ', 'กรุณาลองใหม่อีกครั้ง', 'error');
     }
   };
 
   const resetFormImage = () => {
     setImagePreview(null);
-    setOcrResultKcal(null);
     setConfirmedKcal('');
     setImageHash('');
-    setIsDateValid(true);
-    setOcrRawText('');
   };
 
   // Form submission handler
@@ -1091,7 +287,7 @@ export default function App() {
   const handleDownloadSpec = () => {
     const markdownPayload = `# Specification: FitVerify AI Tracker (ระบบบันทึกสถิติการออกกำลังกายพนักงาน)
 
-ระบบเว็บแอปพลิเคชันสถิติการออกกำลังกายภายในองค์กร รองรับการอัปโหลดภาพถ่ายเพื่ออ่านค่า kcal อัตโนมัติด้วย Local OCR พร้อมระบบป้องกันการทุจริต จัดอันดับตามโครงสร้าง ฝ่าย (Department), กอง (Division) และแสดงผลในรูปแบบ Interactive & Responsive Dashboard
+ระบบเว็บแอปพลิเคชันสถิติการออกกำลังกายภายในองค์กร รองรับการอัปโหลดภาพถ่ายหลักฐานและให้พนักงานกรอกค่า kcal จากภาพด้วยตนเอง พร้อมระบบป้องกันการส่งรูปซ้ำ จัดอันดับตามโครงสร้าง ฝ่าย (Department), กอง (Division) และแสดงผลในรูปแบบ Interactive & Responsive Dashboard
 
 ---
 
@@ -1099,7 +295,7 @@ export default function App() {
 - **Frontend & API Hosting:** Vercel (โฮสต์เว็บแอปพลิเคชัน และ Serverless Functions)
 - **Version Control & CI/CD:** GitHub (เชื่อมต่อกับ Vercel เพื่อ Deploy อัตโนมัติ)
 - **Database, Auth & Storage:** Supabase (PostgreSQL Database + Storage สำหรับเก็บรูปหลักฐาน)
-- **OCR Engine:** Tesseract.js (ประมวลผลบน Client-side / ไม่ใช้ External API ที่มีค่าใช้จ่าย)
+- **Manual Verification:** พนักงานกรอกค่า kcal จากภาพหลักฐานด้วยตนเองและรอผู้ดูแลระบบอนุมัติ
 
 ---
 
@@ -1208,7 +404,7 @@ CREATE TABLE submissions (
     .reduce((sum, s) => sum + s.kcal, 0);
   const confirmedKcalValue = Number(confirmedKcal);
   const hasValidConfirmedKcal = Number.isFinite(confirmedKcalValue) && confirmedKcalValue >= 1 && confirmedKcalValue <= 5000;
-  const canSubmitForm = hasValidConfirmedKcal && isDateValid && !!empIdInput.trim() && !!employees[empIdInput.trim().toUpperCase()];
+  const canSubmitForm = hasValidConfirmedKcal && !!imagePreview && !!empIdInput.trim() && !!employees[empIdInput.trim().toUpperCase()];
 
   return (
     <div className="bg-white text-[#72246C] min-h-screen flex flex-col justify-between">
@@ -1301,7 +497,7 @@ CREATE TABLE submissions (
                       ระบบลงทะเบียนผลรายวัน
                     </h2>
                     <p className="text-xs text-[#72246C]/80 leading-relaxed">
-                      กรอกรหัสพนักงานของคุณ ระบบจะดึงแผนกสังกัดจริงจากฐานข้อมูลให้อัตโนมัติ สามารถแนบไฟล์รูปถ่ายนาฬิกาออกกำลังกายเพื่อจำลองกลไก AI OCR สแกนหาความร้อนแคลอรี่ได้ทันที ระบบมีระบบป้องกันการอัปโหลดไฟล์ซ้ำและสแกนลายนิ้วมือภาพ
+                      กรอกรหัสพนักงาน เลือกกิจกรรม แนบภาพหลักฐาน แล้วกรอกค่า kcal จากภาพด้วยตนเอง ระบบจะตรวจรูปซ้ำด้วย Image Hash และส่งรายการให้ผู้ดูแลอนุมัติก่อนขึ้นคะแนน
                     </p>
                   </div>
                 </div>
@@ -1347,25 +543,33 @@ CREATE TABLE submissions (
 
                     <div>
                       <label className="block text-sm font-semibold text-[#72246C]/80 mb-3">กิจกรรมที่ออกกำลังกาย</label>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
                         {[
-                          { val: 'วิ่ง', label: 'วิ่ง (Running)', icon: <Activity className="h-6 w-6" /> },
-                          { val: 'เดิน', label: 'เดิน (Walking)', icon: <Activity className="h-6 w-6" /> },
-                          { val: 'ปั่นจักรยาน', label: 'ปั่นจักรยาน', icon: <Activity className="h-6 w-6" /> },
-                          { val: 'บอดี้เวท / ยิม', label: 'ยิม (Gym)', icon: <Activity className="h-6 w-6" /> }
+                          { val: 'วิ่ง', label: 'วิ่ง' },
+                          { val: 'เดิน', label: 'เดิน' },
+                          { val: 'ปั่นจักรยาน', label: 'ปั่นจักรยาน' },
+                          { val: 'ยิม / ฟิตเนส', label: 'ยิม / ฟิตเนส' },
+                          { val: 'ปิงปอง', label: 'ปิงปอง' },
+                          { val: 'แบดมินตัน', label: 'แบดมินตัน' },
+                          { val: 'เทนนิส', label: 'เทนนิส' },
+                          { val: 'กอล์ฟ', label: 'กอล์ฟ' },
+                          { val: 'เปตอง', label: 'เปตอง' },
+                          { val: 'บาสเกตบอล', label: 'บาสเกตบอล' },
+                          { val: 'ฟุตบอล / ฟุตซอล', label: 'ฟุตบอล / ฟุตซอล' },
+                          { val: 'กีฬาอื่น ๆ', label: 'กีฬาอื่น ๆ' }
                         ].map(act => (
                           <button
                             key={act.val}
                             type="button"
                             onClick={() => setActivityType(act.val)}
-                            className={`p-4 rounded-xl flex flex-col items-center justify-center text-center gap-2 cursor-pointer transition-all border ${
+                            className={`px-3 py-2 rounded-xl flex items-center justify-center text-center gap-1.5 cursor-pointer transition-all border min-h-11 ${
                               activityType === act.val 
-                                ? 'border-[#C69214]/20 bg-[#72246C]/10 text-[#C69214]' 
-                                : 'border-[#C69214]/20 bg-white text-[#72246C]/65 hover:text-[#72246C]'
+                                ? 'border-[#72246C]/30 bg-gradient-to-r from-[#72246C] to-[#C69214] text-white shadow-sm' 
+                                : 'border-[#C69214]/25 bg-white text-[#72246C] hover:bg-[#72246C]/5'
                             }`}
                           >
-                            <span className="text-2xl">{act.icon}</span>
-                            <span className="text-xs font-semibold">{act.label}</span>
+                            <Activity className="h-3.5 w-3.5 shrink-0" />
+                            <span className="text-[11px] font-semibold leading-tight">{act.label}</span>
                           </button>
                         ))}
                       </div>
@@ -1409,14 +613,14 @@ CREATE TABLE submissions (
                       </div>
                     </div>
 
-                    {ocrLoading && (
+                    {imageLoading && (
                       <div className="bg-white border border-[#C69214]/20 p-6 rounded-2xl flex items-center justify-center gap-3">
                         <Loader2 className="h-5 w-5 text-[#C69214] animate-spin" />
-                        <span className="text-sm font-semibold text-[#C69214]">ระบบ AI กำลังวิเคราะห์รูปภาพและอ่านแคลอรี่...</span>
+                        <span className="text-sm font-semibold text-[#C69214]">กำลังตรวจสอบไฟล์หลักฐาน...</span>
                       </div>
                     )}
 
-                    {imagePreview && !ocrLoading && (
+                    {imagePreview && !imageLoading && (
                       <div className="bg-white border border-[#C69214]/20 p-5 rounded-xl space-y-4">
                         <h3 className="text-xs font-bold text-[#C69214] uppercase tracking-wider flex items-center gap-1.5">
                           <Package className="h-4 w-4" />
@@ -1433,39 +637,25 @@ CREATE TABLE submissions (
                                 max="5000"
                                 value={confirmedKcal}
                                 onChange={(e) => setConfirmedKcal(e.target.value)}
-                                placeholder={ocrResultKcal === null ? 'กรอกเลข' : undefined}
+                                placeholder="กรอกเลข kcal"
                                 className="bg-transparent text-2xl font-bold text-[#C69214] focus:outline-none w-32 border-b border-dashed border-[#C69214]/30"
                               />
                               <span className="text-sm text-[#72246C]/65 font-mono">kcal</span>
                             </div>
                             <p className="mt-2 text-[11px] text-[#72246C]/45">
-                              {ocrResultKcal === null
-                                ? 'OCR ยังอ่านค่าไม่ได้ กรุณากรอกเลขจากภาพด้วยตนเอง'
-                                : `OCR เสนอค่า ${ocrResultKcal.toLocaleString()} kcal - แก้ไขได้ถ้าตัวเลขไม่ตรงภาพ`}
+                              กรุณากรอกค่าจากภาพหลักฐานด้วยตนเองก่อนส่งข้อมูล
                             </p>
                             {!hasValidConfirmedKcal && (
                               <p className="mt-2 text-[11px] text-rose-400">กรุณากรอกตัวเลข 1-5000 kcal ก่อนส่ง</p>
                             )}
                           </div>
-                          <div className={`bg-white p-4 rounded-lg border ${isDateValid ? 'border-[#C69214]/20' : 'border-rose-500/30'} flex flex-col justify-between`}>
+                          <div className="bg-white p-4 rounded-lg border border-[#C69214]/20 flex flex-col justify-between">
                             <div>
-                              <span className="block text-xs text-[#72246C]/65 mb-1">สถานะวันที่หลักฐาน</span>
-                              <span className={`font-bold text-sm ${isDateValid ? 'text-[#C69214]' : 'text-rose-400'}`}>{ocrScannedDate}</span>
+                              <span className="block text-xs text-[#72246C]/65 mb-1">หลักฐานภาพถ่าย</span>
+                              <span className="font-bold text-sm text-[#C69214]">แนบรูปแล้ว กรุณาตรวจสอบข้อมูลก่อนส่ง</span>
                             </div>
                           </div>
                         </div>
-
-                        {/* Raw OCR Text logs for debugging */}
-                        {ocrRawText && (
-                          <div className="bg-white p-4 rounded-lg border border-[#C69214]/20 text-left">
-                            <span className="block text-xs text-[#72246C]/65 font-semibold mb-2 flex items-center gap-1.5">
-                              ข้อความดิบที่ถอดรหัสได้จากภาพ (Raw OCR Text Logs):
-                            </span>
-                            <div className="bg-white p-3 rounded border border-[#72246C]/15 max-h-32 overflow-y-auto font-mono text-[11px] text-[#72246C]/65 whitespace-pre-wrap leading-relaxed">
-                              {ocrRawText.trim() || "(ไม่มีข้อความที่ดึงรหัสได้จากภาพ)"}
-                            </div>
-                          </div>
-                        )}
                       </div>
                     )}
 
@@ -1476,7 +666,7 @@ CREATE TABLE submissions (
                         className={`px-8 py-3 rounded-xl font-bold text-sm transition-all duration-300 shadow-lg ${
                           canSubmitForm
                             ? 'bg-[#C69214] hover:bg-[#B58112] text-[#2A0D27] shadow-[#C69214]/10 cursor-pointer transform hover:-translate-y-0.5 active:translate-y-0'
-                            : 'bg-[#3A1536] text-[#72246C]/45 cursor-not-allowed'
+                            : 'bg-[#F3E9F1] text-[#72246C]/45 border border-[#72246C]/10 cursor-not-allowed shadow-none'
                         }`}
                       >
                         ยืนยันข้อมูลส่งผลงาน
@@ -1924,7 +1114,7 @@ CREATE TABLE submissions (
                       <li><b>Frontend Platform:</b> React 19 + TypeScript + Tailwind CSS โฮสต์ฟรีบน Vercel</li>
                       <li><b>Database Engines:</b> Supabase (PostgreSQL) Free Tier สำหรับข้อมูลหลักและอันดับคะแนน</li>
                       <li><b>Proof Storage Bucket:</b> Supabase Storage (เก็บไฟล์รูปหลักฐาน)</li>
-                      <li><b>Local OCR:</b> Tesseract.js สำหรับถอดคำจากรูปถ่ายแคลอรี่บนอุปกรณ์ผู้ใช้งานโดยไม่มีค่า API</li>
+                      <li><b>Manual kcal entry:</b> ผู้ใช้กรอกค่า kcal จากภาพหลักฐานด้วยตนเองเพื่อลดความคลาดเคลื่อน</li>
                       <li><b>Image Hashing:</b> SHA-256 (Web Crypto API) เพื่อป้องกันรูปเก่าส่งซ้ำ</li>
                     </ul>
                   </div>

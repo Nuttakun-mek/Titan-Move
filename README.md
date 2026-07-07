@@ -1,13 +1,11 @@
-# FitVerify AI Portal
+# PEA Titan Move
 
-FitVerify AI Portal is a React + TypeScript + Vite prototype for collecting, OCR-scanning, and approving employee fitness activity evidence.
+PEA Titan Move is a React + TypeScript + Vite prototype for collecting and approving employee fitness activity evidence.
 
 The app currently supports:
 
-- Employee activity submission with image upload
-- Client-side OCR with Tesseract.js
+- Employee activity submission with image upload and manual kcal entry
 - Duplicate image detection with SHA-256 hashing
-- Date validation from OCR text
 - LocalStorage mock database mode
 - Optional Supabase integration for employees, submissions, and evidence image storage
 - Company dashboard, leaderboard, admin approval queue, and system spec view
@@ -18,7 +16,6 @@ The app currently supports:
 - TypeScript
 - Vite
 - Tailwind CSS
-- Tesseract.js
 - Supabase JavaScript client
 - Oxlint
 

@@ -23,7 +23,7 @@ const INITIAL_SUBMISSIONS: Submission[] = [
   { id: 1, empId: "EMP1001", name: "สมชาย รักดี", department: "เทคโนโลยีสารสนเทศ", division: "พัฒนาซอฟต์แวร์", activityType: "วิ่ง", kcal: 450, imageUrl: "https://images.unsplash.com/photo-1476480862126-209bfaa8edc8?w=400", scannedDate: "2026-07-07", status: "approved", timestamp: "2026-07-07 08:30" },
   { id: 2, empId: "EMP1002", name: "สมศรี ใจงาม", department: "ทรัพยากรบุคคล", division: "สรรหาบุคลากร", activityType: "เดิน", kcal: 250, imageUrl: "https://images.unsplash.com/photo-1506126613408-eca07ce68773?w=400", scannedDate: "2026-07-07", status: "approved", timestamp: "2026-07-07 09:15" },
   { id: 3, empId: "EMP1003", name: "วันชัย กล้าหาญ", department: "ฝ่ายขาย", division: "พัฒนาธุรกิจ", activityType: "ปั่นจักรยาน", kcal: 620, imageUrl: "https://images.unsplash.com/photo-1485965120184-e220f721d03e?w=400", scannedDate: "2026-07-07", status: "pending", timestamp: "2026-07-07 10:00" },
-  { id: 4, empId: "EMP1004", name: "นภา ดาราเพ็ญ", department: "การตลาด", division: "ประชาสัมพันธ์", activityType: "บอดี้เวท / ยิม", kcal: 350, imageUrl: "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=400", scannedDate: "2026-07-06", status: "pending", timestamp: "2026-07-07 11:20" }
+  { id: 4, empId: "EMP1004", name: "นภา ดาราเพ็ญ", department: "การตลาด", division: "ประชาสัมพันธ์", activityType: "ยิม / ฟิตเนส", kcal: 350, imageUrl: "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=400", scannedDate: "2026-07-06", status: "pending", timestamp: "2026-07-07 11:20" }
 ];
 
 export interface Employee {
