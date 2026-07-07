@@ -13,7 +13,6 @@ import {
   Check, 
   X, 
   Search, 
-  Sparkles, 
   AlertCircle, 
   Crown, 
   Medal, 
@@ -38,7 +37,7 @@ function getFallbackCalories(activityType: string): number {
   return 0;
 }
 
-// ─── Image Pre-processing ────────────────────────────────────────────────────
+// ฤฤฤ Image Pre-processing ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
 /** Render image to an off-screen canvas, convert to grayscale and boost contrast,
  *  then return a Blob suitable for Tesseract. This dramatically improves OCR on
  *  fitness-app screenshots that have coloured backgrounds. */
@@ -230,32 +229,32 @@ async function recognizeFocusedCalories(file: File, fullText = ''): Promise<Focu
   return null;
 }
 
-// ─── Calorie Synonym Normaliser ───────────────────────────────────────────────
+// ฤฤฤ Calorie Synonym Normaliser ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
 /** Expand all known calorie synonyms to a single canonical token so that the
  *  scorer always sees "kcal" regardless of the OCR engine's output. */
 function normaliseCalorieText(text: string): string {
   return text
-    // ── Label BEFORE number (common in fitness apps) ────────────────────────
-    // "Calories: 250" / "Calories 250" / "Calorie 250" → "250 kcal"
+    // ฤฤ Label BEFORE number (common in fitness apps) ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
+    // "Calories: 250" / "Calories 250" / "Calorie 250"  "250 kcal"
     .replace(/\bcalories?\s*:?\s*(\d[\d,.]*)/gi, '$1 kcal')
-    // "Energy: 250" / "Energy 250" → "250 kcal"
+    // "Energy: 250" / "Energy 250"  "250 kcal"
     .replace(/\benergy\s*:?\s*(\d[\d,.]*)/gi, '$1 kcal')
-    // "Burned: 350" / "Burned 350" → "350 kcal"
+    // "Burned: 350" / "Burned 350"  "350 kcal"
     .replace(/\bburned?\s*:?\s*(\d[\d,.]*)/gi, '$1 kcal')
-    // "Active Calories" / "Total Calories" labels → "kcal"
+    // "Active Calories" / "Total Calories" labels  "kcal"
     .replace(/\b(?:total|active|passive|resting|basal)\s+calories?\b/gi, 'kcal')
-    // ── Number BEFORE label ─────────────────────────────────────────────────
-    // "250 calories" / "250 calorie" → "250 kcal"
+    // ฤฤ Number BEFORE label ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
+    // "250 calories" / "250 calorie"  "250 kcal"
     .replace(/(\d[\d,.]*)\s*calories?/gi, '$1 kcal')
-    // "250 Cal" (word boundary) → "250 kcal"
+    // "250 Cal" (word boundary)  "250 kcal"
     .replace(/(\d[\d,.]*)\s*Cal\b/g, '$1 kcal')
-    // "250 kCal" → "250 kcal"
+    // "250 kCal"  "250 kcal"
     .replace(/(\d[\d,.]*)\s*kCal\b/gi, '$1 kcal')
-    // ── Standalone labels (no adjacent number) → canonical kcal ─────────────
+    // ฤฤ Standalone labels (no adjacent number)  canonical kcal ฤฤฤฤฤฤฤฤฤฤฤฤฤ
     .replace(/\bcalories?\b/gi, 'kcal')
     .replace(/\benergy\b/gi, 'kcal')
     .replace(/kCal/g, 'kcal')
-    // ── Thai labels ─────────────────────────────────────────────────────────
+    // ฤฤ Thai labels ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
     .replace(/\u0e1e\u0e25\u0e31\u0e07\u0e07\u0e32\u0e19\s*:?\s*(\d[\d,.]*)/g, '$1 kcal')
     .replace(/\u0e1e\u0e25\u0e31\u0e07\u0e07\u0e32\u0e19/g, 'kcal')
     .replace(/\u0e41\u0e04\u0e25(?:\u0e2d\u0e23\u0e35)?\s*:?\s*(\d[\d,.]*)/g, '$1 kcal')
@@ -263,7 +262,7 @@ function normaliseCalorieText(text: string): string {
 }
 
 
-// ─── Smart Calorie Extractor ─────────────────────────────────────────────────
+// ฤฤฤ Smart Calorie Extractor ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
 function extractSmartCalories(cleanedText: string, originalText: string, activityType: string, words: any[]): number {
   // Normalise all synonyms FIRST so every downstream check only needs 'kcal'
   const normText = normaliseCalorieText(cleanedText);
@@ -272,24 +271,24 @@ function extractSmartCalories(cleanedText: string, originalText: string, activit
   const calorieKeywords = ['kcal', 'calories', 'calorie', 'cal', 'burned', 'burn', 'แคล', 'พลังงาน'];
   const penaltyKeywords = ['steps', 'step', 'km', 'meter', 'meters', 'ก้าว', 'กม', 'นาที', 'min', 'mins', '%'];
 
-  // ══════════════════════════════════════════════════════════════════════════════
+  // ออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออ
   // PRIMARY: Spatial nearest-neighbour using Tesseract bounding boxes
-  // ──────────────────────────────────────────────────────────────────────────────
+  // ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
   // Algorithm (as requested):
   //  1. Find every word whose text IS or CONTAINS "calories" / "kcal"
   //  2. Build a pool of NUMBER words (handles comma-thousands like "2,869")
   //  3. Score each number by pixel distance in each of the 4 directions
   //  4. Return the number with the shortest distance to any calorie keyword
-  // ══════════════════════════════════════════════════════════════════════════════
+  // ออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออ
   if (words && words.length > 0) {
-    // ── Step 1: Locate calorie keyword words ───────────────────────────────────
+    // ฤฤ Step 1: Locate calorie keyword words ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
     const calWordRe = /calories?|kcal|\bkal\b|\u0e41\u0e04\u0e25|\u0e1e\u0e25\u0e31\u0e07\u0e07\u0e32\u0e19/i;
     const kwWords = (words as any[]).filter(
       w => w.bbox && w.text && calWordRe.test(w.text)
     );
     console.log('Spatial – keyword words found:', kwWords.map((w: any) => w.text));
 
-    // ── Step 2: Build a number pool ────────────────────────────────────────────
+    // ฤฤ Step 2: Build a number pool ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
     // Each entry may span multiple adjacent word tokens (e.g. "2," + "869").
     // We also accept single-token numbers like "2869" or "2,869".
     type NumEntry = { value: number; cx: number; cy: number; text: string };
@@ -315,7 +314,7 @@ function extractSmartCalories(cleanedText: string, originalText: string, activit
     });
 
     // Multi-token: consecutive words on the same row that together form a number
-    // e.g. ["2,", "869"] → 2869  or  ["1", ",", "250"] → 1250
+    // e.g. ["2,", "869"]  2869  or  ["1", ",", "250"]  1250
     const rowTolerance = 20; // px – words within 20px vertically are "same row"
     for (let i = 0; i < sortedByX.length - 1; i++) {
       const wa = sortedByX[i] as any;
@@ -337,7 +336,7 @@ function extractSmartCalories(cleanedText: string, originalText: string, activit
 
     console.log('Spatial – number pool:', numPool.map((e: NumEntry) => `${e.text}=${e.value}`));
 
-    // ── Step 3: Score by directional proximity ─────────────────────────────────
+    // ฤฤ Step 3: Score by directional proximity ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
     if (kwWords.length > 0 && numPool.length > 0) {
       let bestVal = -1;
       let bestDist = Infinity;
@@ -350,9 +349,9 @@ function extractSmartCalories(cleanedText: string, originalText: string, activit
 
         numPool.forEach((entry: NumEntry) => {
           // Directional bounding-box distance:
-          // – if the number is directly above/below the keyword → use vertical gap
-          // – if to left/right → use horizontal gap
-          // – diagonal → Euclidean
+          // – if the number is directly above/below the keyword  use vertical gap
+          // – if to left/right  use horizontal gap
+          // – diagonal  Euclidean
           const dx = Math.max(0, Math.abs(entry.cx - kwCx) - kwW / 2);
           const dy = Math.max(0, Math.abs(entry.cy - kwCy) - kwH / 2);
           const dist = Math.hypot(dx, dy);
@@ -367,7 +366,7 @@ function extractSmartCalories(cleanedText: string, originalText: string, activit
       });
 
       if (bestVal >= 50) {
-        console.log('✅ Spatial nearest-neighbour result:', bestVal, '(dist:', bestDist.toFixed(0), 'px)');
+        console.log('? Spatial nearest-neighbour result:', bestVal, '(dist:', bestDist.toFixed(0), 'px)');
         return bestVal;
       }
     }
@@ -380,16 +379,16 @@ function extractSmartCalories(cleanedText: string, originalText: string, activit
     return getFallbackCalories(activityType);
   }
 
-  // ── PHASE 0: Line-context search on raw text (most robust for multi-line) ───
+  // ฤฤ PHASE 0: Line-context search on raw text (most robust for multi-line) ฤฤฤ
   // Split by newline and find lines that contain a calorie keyword.
-  // Then scan a ±1 line window for numbers in the calorie range.
+  // Then scan a ?1 line window for numbers in the calorie range.
   // This catches the common fitness layout:
-  //   "13.8 km  2,869"   ← line with number (no keyword)
-  //   "Distance Calories" ← line with keyword (no number)
+  //   "13.8 km  2,869"    line with number (no keyword)
+  //   "Distance Calories"  line with keyword (no number)
   const textLines = originalText.split(/\r?\n/);
   for (let li = 0; li < textLines.length; li++) {
     if (/calories?|kcal|\bkal\b|\u0e41\u0e04\u0e25|\u0e1e\u0e25\u0e31\u0e07\u0e07\u0e32\u0e19/i.test(textLines[li])) {
-      // Combine current line ± 1 neighbour into a single search window
+      // Combine current line ? 1 neighbour into a single search window
       const window0 = [
         textLines[li - 1] ?? '',
         textLines[li],
@@ -401,7 +400,7 @@ function extractSmartCalories(cleanedText: string, originalText: string, activit
       let m0: RegExpExecArray | null;
       const cands0: number[] = [];
       while ((m0 = re0.exec(window0)) !== null) {
-        // Strip commas so "2,869" → 2869
+        // Strip commas so "2,869"  2869
         const n = parseInt(m0[0].replace(/,/g, ''), 10);
         if (n >= 100 && n <= 9999) cands0.push(n);
       }
@@ -413,8 +412,8 @@ function extractSmartCalories(cleanedText: string, originalText: string, activit
     }
   }
 
-  // ── PHASE 1: Direct regex on normalised text (highest confidence) ──────────
-  // After normalisation "250 calories" → "250 kcal", so this catches everything.
+  // ฤฤ PHASE 1: Direct regex on normalised text (highest confidence) ฤฤฤฤฤฤฤฤฤฤ
+  // After normalisation "250 calories"  "250 kcal", so this catches everything.
   const directKcalMatch = normText.match(/(\d{1,5}(?:[,.]\d+)?)\s*kcal/i);
   if (directKcalMatch) {
     const val = parseInt(directKcalMatch[1].replace(/[,.]/g, ''), 10);
@@ -424,9 +423,9 @@ function extractSmartCalories(cleanedText: string, originalText: string, activit
     }
   }
 
-  // ── PHASE 2: Row-based spatial grouping ────────────────────────────────────
+  // ฤฤ PHASE 2: Row-based spatial grouping ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
   // Group words into rows by their vertical centre (y_mid) with a tolerance of
-  // ±half line-height. This is more reliable than column grouping for fitness
+  // ?half line-height. This is more reliable than column grouping for fitness
   // screenshots where values appear BESIDE labels on the same line.
   const validWords = [...words].filter(w => w.bbox && w.text?.trim());
   validWords.sort((a, b) => a.bbox.y0 - b.bbox.y0);
@@ -452,8 +451,8 @@ function extractSmartCalories(cleanedText: string, originalText: string, activit
   rows.forEach(r => r.words.sort((a, b) => a.bbox.x0 - b.bbox.x0));
 
   // Build clean text for each row:
-  // 1. Merge OCR-split comma tokens: "1 , 250" → "1250"
-  // 2. Collapse comma-thousands: "1,250" → "1250"
+  // 1. Merge OCR-split comma tokens: "1 , 250"  "1250"
+  // 2. Collapse comma-thousands: "1,250"  "1250"
   // 3. Normalise calorie synonyms
   const buildRowText = (r: { words: any[] }): string => {
     const raw = r.words.map(w => w.text).join(' ');
@@ -471,7 +470,7 @@ function extractSmartCalories(cleanedText: string, originalText: string, activit
 
   console.log('Row groups for OCR:', rowTexts);
 
-  // ── PHASE 2a: Same-row "number + kcal" → highest priority ──────────────────
+  // ฤฤ PHASE 2a: Same-row "number + kcal"  highest priority ฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤ
   // Reuse rowExtractNum once it's defined below — we inline the same logic here
   // to pick the LARGEST valid number in the kcal row (not the first match).
   for (const row of rowTexts) {
@@ -491,7 +490,7 @@ function extractSmartCalories(cleanedText: string, originalText: string, activit
     }
   }
 
-  // ── PHASE 2b: Cross-row pair – number on one line, label on adjacent line ───
+  // ฤฤ PHASE 2b: Cross-row pair – number on one line, label on adjacent line ฤฤฤ
   const rowHasKcal = (r?: typeof rowTexts[0]) => /kcal/i.test(r?.text ?? '');
 
   /**
@@ -534,14 +533,14 @@ function extractSmartCalories(cleanedText: string, originalText: string, activit
     }
   }
 
-  // ── PHASE 2c: Spatial proximity using bounding boxes (most robust) ──────────
+  // ฤฤ PHASE 2c: Spatial proximity using bounding boxes (most robust) ฤฤฤฤฤฤฤฤฤฤ
   // Finds each "calorie" keyword word in the OCR result, then picks the
   // nearest valid number word by pixel distance. Handles any layout:
   //   - number left / label right
   //   - label above / number below
-  //   - two-column (number top-right, label bottom-right) ← the common case
+  //   - two-column (number top-right, label bottom-right)  the common case
   // numWordRe: match a token that is purely digits (after stripping commas/dots)
-  // Handles "2,869" → clean "2869" → 4 digits ✓
+  // Handles "2,869"  clean "2869"  4 digits ?
   const numWordRe = /^\d{2,6}$/;
 
   // Collect all number words (including comma-formatted like "2,869")
@@ -586,7 +585,7 @@ function extractSmartCalories(cleanedText: string, originalText: string, activit
     }
   }
 
-  // ── PHASE 3: Fallback scoring (original algorithm on normalised text) ───────
+  // ฤฤ PHASE 3: Fallback scoring (original algorithm on normalised text) ฤฤฤฤฤฤฤ
   const numRegex = /\b\d{2,5}\b/g;
   const matches = normText.match(numRegex);
 
@@ -907,7 +906,7 @@ export default function App() {
         const words = (data as any).words || [];
         console.log('OCR Raw Text:', text);
 
-        // Step 1 – remove formatting separators so "13,775" → "13775"
+        // Step 1 – remove formatting separators so "13,775"  "13775"
         const cleanedText = text.replace(/(\d+)[,.](\d+)/g, '$1$2');
         console.log('Cleaned OCR Text:', cleanedText);
 
@@ -1211,32 +1210,32 @@ CREATE TABLE submissions (
   const canSubmitForm = hasValidConfirmedKcal && isDateValid && !!empIdInput.trim() && !!employees[empIdInput.trim().toUpperCase()];
 
   return (
-    <div className="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between">
+    <div className="bg-[#160817] text-white min-h-screen flex flex-col justify-between">
       
       {/* HEADER SECTION */}
-      <header className="bg-slate-900 border-b border-slate-800 py-4 px-6 sticky top-0 z-50 flex flex-wrap justify-between items-center gap-4">
-        <div className="flex items-center gap-3">
-          <div className="bg-gradient-to-tr from-emerald-500 to-teal-400 p-2.5 rounded-xl shadow-lg shadow-emerald-500/20">
-            <Sparkles className="h-6 w-6 text-slate-950" />
+      <header className="bg-[#2A0D27]/95 border-b border-[#C69214]/25 py-3 px-6 sticky top-0 z-50 flex flex-wrap justify-between items-center gap-4 shadow-lg shadow-black/20 backdrop-blur">
+        <div className="flex items-center gap-4">
+          <div className="bg-white rounded-xl border border-[#C69214]/50 shadow-lg shadow-[#C69214]/15 px-3 py-2">
+            <img src="/pea-move.png" alt="PEA Titan Move" className="h-14 w-auto object-contain" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-emerald-400 to-teal-300 bg-clip-text text-transparent m-0 leading-none">
-              FitVerify AI Portal
+            <h1 className="text-xl font-bold tracking-tight text-white m-0 leading-none">
+              PEA Titan Move
             </h1>
-            <p className="text-[10px] text-slate-400 mt-1 mb-0">
-              ระบบบันทึกและตรวจสอบสถิติการออกกำลังกาย 0 บาท
+            <p className="text-[10px] text-[#F4D06F] mt-1 mb-0">
+              ขยับวันนี้ เพื่อสุขภาพที่ดีของเรา
             </p>
           </div>
         </div>
         
         <div className="flex items-center gap-2">
-          <nav className="flex flex-wrap bg-slate-950 p-1.5 rounded-xl border border-slate-800 gap-1">
+          <nav className="flex flex-wrap bg-[#160817] p-1.5 rounded-xl border border-[#C69214]/25 gap-1">
             <button 
               onClick={() => handleTabChange('employee-form')} 
               className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-300 ${
                 activeTab === 'employee-form' 
-                  ? 'bg-emerald-500 text-slate-950 shadow-md' 
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-[#C69214] text-[#2A0D27] shadow-md' 
+                  : 'text-white/70 hover:text-white'
               }`}
             >
               <UploadCloud className="h-4 w-4" />
@@ -1247,8 +1246,8 @@ CREATE TABLE submissions (
               onClick={() => handleTabChange('company-dashboard')} 
               className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-300 ${
                 activeTab === 'company-dashboard' 
-                  ? 'bg-emerald-500 text-slate-950 shadow-md' 
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-[#C69214] text-[#2A0D27] shadow-md' 
+                  : 'text-white/70 hover:text-white'
               }`}
             >
               <TrendingUp className="h-4 w-4" />
@@ -1263,13 +1262,13 @@ CREATE TABLE submissions (
             onClick={() => handleTabChange('admin-portal')}
             className={`relative w-9 h-9 rounded-full border flex items-center justify-center transition-all ${
               activeTab === 'admin-portal'
-                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                : 'border-slate-800 bg-slate-950/80 text-slate-600 hover:text-slate-300 hover:border-slate-700'
+                ? 'border-[#C69214]/40 bg-[#C69214]/10 text-[#F4D06F]'
+                : 'border-[#C69214]/20 bg-[#160817]/80 text-white/35 hover:text-white/80 hover:border-[#C69214]/45'
             }`}
           >
             <LockKeyhole className="h-3.5 w-3.5" />
             {pendingQueue.length > 0 && (
-              <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[9px] min-w-4 h-4 px-1 rounded-full flex items-center justify-center font-bold border border-slate-900">
+              <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[9px] min-w-4 h-4 px-1 rounded-full flex items-center justify-center font-bold border border-[#2A0D27]">
                 {pendingQueue.length}
               </span>
             )}
@@ -1281,14 +1280,14 @@ CREATE TABLE submissions (
       <main className="flex-grow container mx-auto px-4 py-8 max-w-7xl">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3">
-            <Loader2 className="h-10 w-10 text-emerald-400 animate-spin" />
-            <p className="text-sm text-slate-400">กำลังโหลดข้อมูลระบบ...</p>
+            <Loader2 className="h-10 w-10 text-[#C69214] animate-spin" />
+            <p className="text-sm text-white/60">กำลังโหลดข้อมูลระบบ...</p>
           </div>
         ) : (
           <>
             {/* ALERT BOX FOR MOCK STATUS */}
             {dbService.isMock && (
-              <div className="mb-6 bg-slate-900/60 border border-amber-500/20 rounded-2xl p-4 flex items-center gap-3 text-xs text-amber-300">
+              <div className="mb-6 bg-[#2A0D27]/60 border border-amber-500/20 rounded-2xl p-4 flex items-center gap-3 text-xs text-amber-300">
                 <AlertCircle className="h-5 w-5 text-amber-500 shrink-0" />
                 <div>
                   <span className="font-bold">โหมดจำลองฐานข้อมูลในเครื่อง (LocalStorage Mode) กำลังทำงาน:</span> ข้อมูลทั้งหมดจะบันทึกอยู่ในเว็บเบราว์เซอร์นี้แบบออฟไลน์ คุณสามารถแก้ไขและทดสอบได้ฟรีโดยไม่มีค่าใช้จ่าย และหากพร้อมเชื่อมต่อฐานข้อมูล Supabase สามารถนำ URL/Key ไปใส่ในตัวแปรสภาพแวดล้อมได้ทันที
@@ -1300,31 +1299,31 @@ CREATE TABLE submissions (
             {activeTab === 'employee-form' && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
                 <div className="lg:col-span-4 space-y-6">
-                  <div className="bg-gradient-to-br from-emerald-950/40 to-slate-900 border border-emerald-500/20 p-6 rounded-2xl">
-                    <h2 className="text-lg font-bold text-emerald-400 mb-3 flex items-center gap-2">
+                  <div className="bg-gradient-to-br from-[#2A0D27]/70 to-[#160817] border border-[#C69214]/20 p-6 rounded-2xl">
+                    <h2 className="text-lg font-bold text-[#C69214] mb-3 flex items-center gap-2">
                       <Info className="h-4 w-4" /> 
                       ระบบลงทะเบียนผลรายวัน
                     </h2>
-                    <p className="text-xs text-slate-300 leading-relaxed">
+                    <p className="text-xs text-white/75 leading-relaxed">
                       กรอกรหัสพนักงานของคุณ ระบบจะดึงแผนกสังกัดจริงจากฐานข้อมูลให้อัตโนมัติ สามารถแนบไฟล์รูปถ่ายนาฬิกาออกกำลังกายเพื่อจำลองกลไก AI OCR สแกนหาความร้อนแคลอรี่ได้ทันที ระบบมีระบบป้องกันการอัปโหลดไฟล์ซ้ำและสแกนลายนิ้วมือภาพ
                     </p>
                   </div>
                 </div>
 
-                <div className="lg:col-span-8 bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl relative overflow-hidden">
-                  <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-emerald-500 to-teal-400"></div>
-                  <h2 className="text-2xl font-bold text-slate-100 mb-6 flex items-center gap-3">
-                    <User className="h-6 w-6 text-emerald-400" />
+                <div className="lg:col-span-8 bg-[#2A0D27] border border-[#C69214]/20 rounded-3xl p-6 md:p-8 shadow-xl relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-[#C69214] to-[#72246C]"></div>
+                  <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
+                    <User className="h-6 w-6 text-[#C69214]" />
                     ส่งผลการเผาผลาญพลังงานประจำวัน
                   </h2>
 
                   <form onSubmit={handleFormSubmit} className="space-y-6">
                     <div>
-                      <label className="block text-sm font-semibold text-slate-300 mb-2">
+                      <label className="block text-sm font-semibold text-white/75 mb-2">
                         เลขรหัสพนักงาน (กรอกเพื่อทดสอบ: EMP1001 ถึง EMP1005)
                       </label>
                       <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                        <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-white/45">
                           <User className="h-5 w-5" />
                         </div>
                         <input 
@@ -1333,11 +1332,11 @@ CREATE TABLE submissions (
                           value={empIdInput}
                           onChange={(e) => setEmpIdInput(e.target.value)}
                           placeholder="เช่น EMP1001, EMP1002..." 
-                          className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl py-3 pl-11 pr-4 text-slate-200 placeholder-slate-600 transition-all focus:outline-none"
+                          className="w-full bg-[#160817] border border-[#C69214]/20 focus:border-[#C69214] focus:ring-1 focus:ring-[#C69214] rounded-xl py-3 pl-11 pr-4 text-white/90 placeholder-white/35 transition-all focus:outline-none"
                         />
                       </div>
                       {empIdInput.trim() && employees[empIdInput.trim().toUpperCase()] && (
-                        <p className="mt-2 text-xs text-emerald-400 flex items-center gap-1">
+                        <p className="mt-2 text-xs text-[#C69214] flex items-center gap-1">
                           <Check className="h-3 h-3" />
                           พนักงาน: {employees[empIdInput.trim().toUpperCase()].name} | ฝ่าย: {employees[empIdInput.trim().toUpperCase()].department} ({employees[empIdInput.trim().toUpperCase()].division})
                         </p>
@@ -1351,7 +1350,7 @@ CREATE TABLE submissions (
                     </div>
 
                     <div>
-                      <label className="block text-sm font-semibold text-slate-300 mb-3">กิจกรรมที่ออกกำลังกาย</label>
+                      <label className="block text-sm font-semibold text-white/75 mb-3">กิจกรรมที่ออกกำลังกาย</label>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         {[
                           { val: 'วิ่ง', label: 'วิ่ง (Running)', icon: <Activity className="h-6 w-6" /> },
@@ -1365,8 +1364,8 @@ CREATE TABLE submissions (
                             onClick={() => setActivityType(act.val)}
                             className={`p-4 rounded-xl flex flex-col items-center justify-center text-center gap-2 cursor-pointer transition-all border ${
                               activityType === act.val 
-                                ? 'border-emerald-500/20 bg-slate-900/50 text-emerald-400' 
-                                : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200'
+                                ? 'border-[#C69214]/20 bg-[#2A0D27]/50 text-[#C69214]' 
+                                : 'border-[#C69214]/20 bg-[#160817] text-white/60 hover:text-white/90'
                             }`}
                           >
                             <span className="text-2xl">{act.icon}</span>
@@ -1377,8 +1376,8 @@ CREATE TABLE submissions (
                     </div>
 
                     <div>
-                      <label className="block text-sm font-semibold text-slate-300 mb-2">อัปโหลดภาพถ่ายหลักฐานบันทึกผล</label>
-                      <div className="border-2 border-dashed border-slate-800 hover:border-emerald-500/40 bg-slate-950 rounded-2xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all relative overflow-hidden group">
+                      <label className="block text-sm font-semibold text-white/75 mb-2">อัปโหลดภาพถ่ายหลักฐานบันทึกผล</label>
+                      <div className="border-2 border-dashed border-[#C69214]/20 hover:border-[#C69214]/40 bg-[#160817] rounded-2xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all relative overflow-hidden group">
                         <input 
                           type="file" 
                           accept="image/*" 
@@ -1421,23 +1420,23 @@ CREATE TABLE submissions (
                               setOcrLoading(false);
                             }
                           }}
-                          className="absolute bottom-2 right-2 px-2.5 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 text-[10px] rounded border border-emerald-500/30 z-30 transition-colors cursor-pointer font-sans"
+                          className="absolute bottom-2 right-2 px-2.5 py-1.5 bg-[#C69214]/20 hover:bg-[#C69214]/30 text-[#C69214] text-[10px] rounded border border-[#C69214]/30 z-30 transition-colors cursor-pointer font-sans"
                         >
-                          ⚡ ใช้ภาพตัวอย่าง (450 kcal)
+                          ใช้ภาพตัวอย่าง (450 kcal)
                         </button>
                         
                         {!imagePreview ? (
                           <div className="space-y-3 py-4">
-                            <div className="w-14 h-14 rounded-full bg-slate-900 flex items-center justify-center mx-auto text-emerald-400 group-hover:scale-110 transition-transform">
+                            <div className="w-14 h-14 rounded-full bg-[#2A0D27] flex items-center justify-center mx-auto text-[#C69214] group-hover:scale-110 transition-transform">
                               <UploadCloud className="h-6 w-6" />
                             </div>
-                            <p className="text-sm text-slate-300">
-                              <span className="text-emerald-400 font-semibold">คลิกอัปโหลดรูปภาพ</span> หรือลากวางไฟล์ที่นี่
+                            <p className="text-sm text-white/75">
+                              <span className="text-[#C69214] font-semibold">คลิกอัปโหลดรูปภาพ</span> หรือลากวางไฟล์ที่นี่
                             </p>
-                            <p className="text-xs text-slate-500 font-mono">JPG, PNG หรือภาพถ่ายจากนาฬิกาสมาร์ทวอทช์</p>
+                            <p className="text-xs text-white/45 font-mono">JPG, PNG หรือภาพถ่ายจากนาฬิกาสมาร์ทวอทช์</p>
                           </div>
                         ) : (
-                          <div className="w-full max-w-xs rounded-xl overflow-hidden border border-slate-850 bg-slate-950/80 p-2 relative z-30 flex justify-center items-center mx-auto">
+                          <div className="w-full max-w-xs rounded-xl overflow-hidden border border-[#C69214]/15 bg-[#160817]/80 p-2 relative z-30 flex justify-center items-center mx-auto">
                             <img 
                               src={imagePreview} 
                               className="max-h-96 w-auto max-w-full rounded-lg object-contain" 
@@ -1446,7 +1445,7 @@ CREATE TABLE submissions (
                             <button 
                               type="button" 
                               onClick={(e) => { e.stopPropagation(); resetFormImage(); }} 
-                              className="absolute top-4 right-4 bg-slate-950/80 hover:bg-slate-900 text-rose-400 hover:text-rose-300 w-8 h-8 rounded-full flex items-center justify-center border border-slate-800 shadow-md transition-colors"
+                              className="absolute top-4 right-4 bg-[#160817]/80 hover:bg-[#2A0D27] text-rose-400 hover:text-rose-300 w-8 h-8 rounded-full flex items-center justify-center border border-[#C69214]/20 shadow-md transition-colors"
                             >
                               <Trash2 className="h-4 w-4" />
                             </button>
@@ -1456,21 +1455,21 @@ CREATE TABLE submissions (
                     </div>
 
                     {ocrLoading && (
-                      <div className="bg-slate-950 border border-slate-800 p-6 rounded-2xl flex items-center justify-center gap-3">
-                        <Loader2 className="h-5 w-5 text-emerald-400 animate-spin" />
-                        <span className="text-sm font-semibold text-emerald-400">ระบบ AI กำลังวิเคราะห์รูปภาพและอ่านแคลอรี่...</span>
+                      <div className="bg-[#160817] border border-[#C69214]/20 p-6 rounded-2xl flex items-center justify-center gap-3">
+                        <Loader2 className="h-5 w-5 text-[#C69214] animate-spin" />
+                        <span className="text-sm font-semibold text-[#C69214]">ระบบ AI กำลังวิเคราะห์รูปภาพและอ่านแคลอรี่...</span>
                       </div>
                     )}
 
                     {imagePreview && !ocrLoading && (
-                      <div className="bg-emerald-950/20 border border-emerald-500/20 p-5 rounded-xl space-y-4">
-                        <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <div className="bg-[#2A0D27]/20 border border-[#C69214]/20 p-5 rounded-xl space-y-4">
+                        <h3 className="text-xs font-bold text-[#C69214] uppercase tracking-wider flex items-center gap-1.5">
                           <Package className="h-4 w-4" />
                           ตรวจสอบและยืนยันข้อมูลจากภาพถ่าย
                         </h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="bg-slate-950/60 p-4 rounded-lg border border-slate-800">
-                            <label className="block text-xs text-slate-400 mb-1">จำนวนพลังงานที่จะบันทึกจริง</label>
+                          <div className="bg-[#160817]/60 p-4 rounded-lg border border-[#C69214]/20">
+                            <label className="block text-xs text-white/60 mb-1">จำนวนพลังงานที่จะบันทึกจริง</label>
                             <div className="flex items-baseline gap-2">
                               <input 
                                 type="number" 
@@ -1480,11 +1479,11 @@ CREATE TABLE submissions (
                                 value={confirmedKcal}
                                 onChange={(e) => setConfirmedKcal(e.target.value)}
                                 placeholder={ocrResultKcal === null ? 'กรอกเลข' : undefined}
-                                className="bg-transparent text-2xl font-bold text-emerald-400 focus:outline-none w-32 border-b border-dashed border-emerald-500/30"
+                                className="bg-transparent text-2xl font-bold text-[#C69214] focus:outline-none w-32 border-b border-dashed border-[#C69214]/30"
                               />
-                              <span className="text-sm text-slate-400 font-mono">kcal</span>
+                              <span className="text-sm text-white/60 font-mono">kcal</span>
                             </div>
-                            <p className="mt-2 text-[11px] text-slate-500">
+                            <p className="mt-2 text-[11px] text-white/45">
                               {ocrResultKcal === null
                                 ? 'OCR ยังอ่านค่าไม่ได้ กรุณากรอกเลขจากภาพด้วยตนเอง'
                                 : `OCR เสนอค่า ${ocrResultKcal.toLocaleString()} kcal - แก้ไขได้ถ้าตัวเลขไม่ตรงภาพ`}
@@ -1493,21 +1492,21 @@ CREATE TABLE submissions (
                               <p className="mt-2 text-[11px] text-rose-400">กรุณากรอกตัวเลข 1-5000 kcal ก่อนส่ง</p>
                             )}
                           </div>
-                          <div className={`bg-slate-950/60 p-4 rounded-lg border ${isDateValid ? 'border-slate-800' : 'border-rose-500/30'} flex flex-col justify-between`}>
+                          <div className={`bg-[#160817]/60 p-4 rounded-lg border ${isDateValid ? 'border-[#C69214]/20' : 'border-rose-500/30'} flex flex-col justify-between`}>
                             <div>
-                              <span className="block text-xs text-slate-400 mb-1">สถานะวันที่หลักฐาน</span>
-                              <span className={`font-bold text-sm ${isDateValid ? 'text-emerald-400' : 'text-rose-400'}`}>{ocrScannedDate}</span>
+                              <span className="block text-xs text-white/60 mb-1">สถานะวันที่หลักฐาน</span>
+                              <span className={`font-bold text-sm ${isDateValid ? 'text-[#C69214]' : 'text-rose-400'}`}>{ocrScannedDate}</span>
                             </div>
                           </div>
                         </div>
 
                         {/* Raw OCR Text logs for debugging */}
                         {ocrRawText && (
-                          <div className="bg-slate-950/60 p-4 rounded-lg border border-slate-800 text-left">
-                            <span className="block text-xs text-slate-400 font-semibold mb-2 flex items-center gap-1.5">
-                              🔍 ข้อความดิบที่ถอดรหัสได้จากภาพ (Raw OCR Text Logs):
+                          <div className="bg-[#160817]/60 p-4 rounded-lg border border-[#C69214]/20 text-left">
+                            <span className="block text-xs text-white/60 font-semibold mb-2 flex items-center gap-1.5">
+                              ข้อความดิบที่ถอดรหัสได้จากภาพ (Raw OCR Text Logs):
                             </span>
-                            <div className="bg-slate-950 p-3 rounded border border-slate-900 max-h-32 overflow-y-auto font-mono text-[11px] text-slate-400 whitespace-pre-wrap leading-relaxed">
+                            <div className="bg-[#160817] p-3 rounded border border-[#2A0D27] max-h-32 overflow-y-auto font-mono text-[11px] text-white/60 whitespace-pre-wrap leading-relaxed">
                               {ocrRawText.trim() || "(ไม่มีข้อความที่ดึงรหัสได้จากภาพ)"}
                             </div>
                           </div>
@@ -1521,8 +1520,8 @@ CREATE TABLE submissions (
                         disabled={!canSubmitForm} 
                         className={`px-8 py-3 rounded-xl font-bold text-sm transition-all duration-300 shadow-lg ${
                           canSubmitForm
-                            ? 'bg-emerald-500 hover:bg-emerald-600 text-slate-950 shadow-emerald-500/10 cursor-pointer transform hover:-translate-y-0.5 active:translate-y-0'
-                            : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                            ? 'bg-[#C69214] hover:bg-[#B58112] text-[#2A0D27] shadow-[#C69214]/10 cursor-pointer transform hover:-translate-y-0.5 active:translate-y-0'
+                            : 'bg-[#3A1536] text-white/45 cursor-not-allowed'
                         }`}
                       >
                         ยืนยันข้อมูลส่งผลงาน
@@ -1538,7 +1537,7 @@ CREATE TABLE submissions (
               <div className="space-y-8 animate-fadeIn">
                 {/* TOP AGGREGATES CARDS */}
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                  <div className="bg-gradient-to-br from-amber-950/40 via-slate-900 to-slate-900 border border-amber-500/30 rounded-2xl p-6 relative overflow-hidden lg:col-span-2 group">
+                  <div className="bg-gradient-to-br from-[#C69214]/20 via-[#2A0D27] to-[#160817] border border-[#C69214]/30 rounded-2xl p-6 relative overflow-hidden lg:col-span-2 group">
                     <div className="absolute -right-4 -bottom-4 text-amber-500/5 text-9xl group-hover:scale-110 transition-transform">
                       <Crown />
                     </div>
@@ -1548,15 +1547,15 @@ CREATE TABLE submissions (
                           <Crown className="h-3.5 w-3.5" />
                           แชมป์แคลอรี่สะสมสูงสุดสัปดาห์นี้
                         </span>
-                        <h3 className="text-2xl font-extrabold text-slate-100 mt-4 tracking-tight">
+                        <h3 className="text-2xl font-extrabold text-white mt-4 tracking-tight">
                           {topPerformer ? topPerformer.name : 'กำลังรอผลอนุมัติ'}
                         </h3>
-                        <p className="text-xs text-slate-400 mt-1">
+                        <p className="text-xs text-white/60 mt-1">
                           สังกัด: {topPerformer ? `${topPerformer.department} (${topPerformer.division})` : '-'}
                         </p>
                       </div>
                       <div className="text-right">
-                        <span className="text-xs text-slate-500 block font-mono">ยอดเผาผลาญสะสม</span>
+                        <span className="text-xs text-white/45 block font-mono">ยอดเผาผลาญสะสม</span>
                         <span className="text-3xl font-black text-amber-400 font-mono">
                           {topKcal.toLocaleString()}
                         </span>
@@ -1565,38 +1564,38 @@ CREATE TABLE submissions (
                     </div>
                   </div>
 
-                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 relative overflow-hidden">
-                    <p className="text-sm text-slate-400 font-medium">รวมพลังงานองค์กรที่เผาผลาญ</p>
-                    <h3 className="text-3xl font-extrabold text-emerald-400 mt-2 font-mono">
+                  <div className="bg-[#2A0D27] border border-[#C69214]/20 rounded-2xl p-6 relative overflow-hidden">
+                    <p className="text-sm text-white/60 font-medium">รวมพลังงานองค์กรที่เผาผลาญ</p>
+                    <h3 className="text-3xl font-extrabold text-[#C69214] mt-2 font-mono">
                       {totalKcal.toLocaleString()} kcal
                     </h3>
-                    <span className="text-xs text-slate-500">นับเฉพาะรายงานที่ได้รับการอนุมัติ</span>
+                    <span className="text-xs text-white/45">นับเฉพาะรายงานที่ได้รับการอนุมัติ</span>
                   </div>
 
-                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 relative overflow-hidden">
-                    <p className="text-sm text-slate-400 font-medium">บุคลากรที่เข้าร่วมสุขภาพ</p>
-                    <h3 className="text-3xl font-extrabold text-teal-400 mt-2 font-mono">
+                  <div className="bg-[#2A0D27] border border-[#C69214]/20 rounded-2xl p-6 relative overflow-hidden">
+                    <p className="text-sm text-white/60 font-medium">บุคลากรที่เข้าร่วมสุขภาพ</p>
+                    <h3 className="text-3xl font-extrabold text-[#C69214] mt-2 font-mono">
                       {activeUserCount} คน
                     </h3>
-                    <span className="text-xs text-slate-500">คนที่มีคะแนนอนุมัติแล้ว</span>
+                    <span className="text-xs text-white/45">คนที่มีคะแนนอนุมัติแล้ว</span>
                   </div>
                 </div>
 
                 {/* LEADERS CHART BOARD */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                   {/* Department ranking */}
-                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                  <div className="bg-[#2A0D27] border border-[#C69214]/20 rounded-2xl p-6">
                     <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-lg font-bold text-slate-200 flex items-center gap-2">
-                        <MapPin className="h-5 w-5 text-emerald-400" />
+                      <h3 className="text-lg font-bold text-white/90 flex items-center gap-2">
+                        <MapPin className="h-5 w-5 text-[#C69214]" />
                         อันดับตาม "ฝ่าย" (Department Leaderboard)
                       </h3>
-                      <span className="text-[10px] bg-slate-950 text-slate-400 px-2 py-0.5 rounded font-mono">Kcal Rank</span>
+                      <span className="text-[10px] bg-[#160817] text-white/60 px-2 py-0.5 rounded font-mono">Kcal Rank</span>
                     </div>
                     
                     <div className="space-y-5 mt-6">
                       {sortedDepts.length === 0 ? (
-                        <p className="text-xs text-slate-500 text-center py-8 font-mono">ยังไม่มีข้อมูลคะแนนอนุมัติรายฝ่าย</p>
+                        <p className="text-xs text-white/45 text-center py-8 font-mono">ยังไม่มีข้อมูลคะแนนอนุมัติรายฝ่าย</p>
                       ) : (
                         sortedDepts.map((dept, idx) => {
                           const maxVal = sortedDepts[0]?.kcal || 1;
@@ -1605,19 +1604,19 @@ CREATE TABLE submissions (
                             <div key={dept.name} className="space-y-2">
                               <div className="flex justify-between items-center text-xs">
                                 <div className="flex items-center gap-2">
-                                  <div className="w-6 h-6 rounded-full bg-slate-950 flex items-center justify-center font-bold">
+                                  <div className="w-6 h-6 rounded-full bg-[#160817] flex items-center justify-center font-bold">
                                     {idx === 0 ? <Crown className="h-3 w-3 text-amber-400" /> : 
-                                     idx === 1 ? <Medal className="h-3 w-3 text-slate-300" /> :
+                                     idx === 1 ? <Medal className="h-3 w-3 text-white/75" /> :
                                      idx === 2 ? <Medal className="h-3 w-3 text-amber-600" /> : 
-                                     <span className="text-[10px] text-slate-500 font-mono">{idx + 1}</span>}
+                                     <span className="text-[10px] text-white/45 font-mono">{idx + 1}</span>}
                                   </div>
-                                  <span className="font-semibold text-slate-200">{dept.name}</span>
+                                  <span className="font-semibold text-white/90">{dept.name}</span>
                                 </div>
-                                <span className="font-bold text-emerald-400 font-mono">{dept.kcal.toLocaleString()} kcal</span>
+                                <span className="font-bold text-[#C69214] font-mono">{dept.kcal.toLocaleString()} kcal</span>
                               </div>
-                              <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden">
+                              <div className="w-full bg-[#160817] rounded-full h-1.5 overflow-hidden">
                                 <div 
-                                  className="bg-gradient-to-r from-emerald-500 to-teal-400 h-full rounded-full transition-all duration-1000" 
+                                  className="bg-gradient-to-r from-[#C69214] to-[#72246C] h-full rounded-full transition-all duration-1000" 
                                   style={{ width: `${percentage}%` }}
                                 ></div>
                               </div>
@@ -1629,18 +1628,18 @@ CREATE TABLE submissions (
                   </div>
 
                   {/* Division ranking */}
-                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                  <div className="bg-[#2A0D27] border border-[#C69214]/20 rounded-2xl p-6">
                     <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-lg font-bold text-slate-200 flex items-center gap-2">
-                        <Layers className="h-5 w-5 text-teal-400" />
+                      <h3 className="text-lg font-bold text-white/90 flex items-center gap-2">
+                        <Layers className="h-5 w-5 text-[#C69214]" />
                         อันดับตาม "กอง" (Division Leaderboard)
                       </h3>
-                      <span className="text-[10px] bg-slate-950 text-slate-400 px-2 py-0.5 rounded font-mono">Kcal Rank</span>
+                      <span className="text-[10px] bg-[#160817] text-white/60 px-2 py-0.5 rounded font-mono">Kcal Rank</span>
                     </div>
 
                     <div className="space-y-5 mt-6">
                       {sortedDivs.length === 0 ? (
-                        <p className="text-xs text-slate-500 text-center py-8 font-mono">ยังไม่มีข้อมูลคะแนนอนุมัติรายกอง</p>
+                        <p className="text-xs text-white/45 text-center py-8 font-mono">ยังไม่มีข้อมูลคะแนนอนุมัติรายกอง</p>
                       ) : (
                         sortedDivs.map((div, idx) => {
                           const maxVal = sortedDivs[0]?.kcal || 1;
@@ -1649,19 +1648,19 @@ CREATE TABLE submissions (
                             <div key={div.name} className="space-y-2">
                               <div className="flex justify-between items-center text-xs">
                                 <div className="flex items-center gap-2">
-                                  <div className="w-6 h-6 rounded-full bg-slate-950 flex items-center justify-center font-bold">
+                                  <div className="w-6 h-6 rounded-full bg-[#160817] flex items-center justify-center font-bold">
                                     {idx === 0 ? <Crown className="h-3 w-3 text-amber-400" /> : 
-                                     idx === 1 ? <Medal className="h-3 w-3 text-slate-300" /> :
+                                     idx === 1 ? <Medal className="h-3 w-3 text-white/75" /> :
                                      idx === 2 ? <Medal className="h-3 w-3 text-amber-600" /> : 
-                                     <span className="text-[10px] text-slate-500 font-mono">{idx + 1}</span>}
+                                     <span className="text-[10px] text-white/45 font-mono">{idx + 1}</span>}
                                   </div>
-                                  <span className="font-semibold text-slate-200">{div.name}</span>
+                                  <span className="font-semibold text-white/90">{div.name}</span>
                                 </div>
-                                <span className="font-bold text-teal-400 font-mono">{div.kcal.toLocaleString()} kcal</span>
+                                <span className="font-bold text-[#C69214] font-mono">{div.kcal.toLocaleString()} kcal</span>
                               </div>
-                              <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden">
+                              <div className="w-full bg-[#160817] rounded-full h-1.5 overflow-hidden">
                                 <div 
-                                  className="bg-gradient-to-r from-teal-500 to-blue-500 h-full rounded-full transition-all duration-1000" 
+                                  className="bg-gradient-to-r from-[#72246C] to-[#C69214] h-full rounded-full transition-all duration-1000" 
                                   style={{ width: `${percentage}%` }}
                                 ></div>
                               </div>
@@ -1674,11 +1673,11 @@ CREATE TABLE submissions (
                 </div>
 
                 {/* SEARCH HISTORIES PORTLET */}
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                <div className="bg-[#2A0D27] border border-[#C69214]/20 rounded-2xl p-6">
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                     <div>
-                      <h3 className="text-lg font-bold text-slate-200">ตรวจสอบประวัติสถิติรายบุคคล</h3>
-                      <p className="text-xs text-slate-400">ระบุรหัสพนักงานเพื่อดูประวัติและผลลัพธ์ย้อนหลังทั้งหมด</p>
+                      <h3 className="text-lg font-bold text-white/90">ตรวจสอบประวัติสถิติรายบุคคล</h3>
+                      <p className="text-xs text-white/60">ระบุรหัสพนักงานเพื่อดูประวัติและผลลัพธ์ย้อนหลังทั้งหมด</p>
                     </div>
                     <div className="relative w-full sm:w-72">
                       <input 
@@ -1686,25 +1685,25 @@ CREATE TABLE submissions (
                         placeholder="กรอกรหัส เช่น EMP1001..." 
                         value={searchId}
                         onChange={(e) => setSearchId(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-lg py-2 pl-9 pr-4 text-sm text-slate-300 transition-all focus:outline-none"
+                        className="w-full bg-[#160817] border border-[#C69214]/20 focus:border-[#C69214] rounded-lg py-2 pl-9 pr-4 text-sm text-white/75 transition-all focus:outline-none"
                       />
-                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center text-white/45 pointer-events-none">
                         <Search className="h-4 w-4" />
                       </div>
                     </div>
                   </div>
 
-                  <div className="bg-slate-950 rounded-xl p-5 border border-slate-800">
-                    <div className="flex flex-col sm:flex-row justify-between pb-4 border-b border-slate-800 gap-4">
+                  <div className="bg-[#160817] rounded-xl p-5 border border-[#C69214]/20">
+                    <div className="flex flex-col sm:flex-row justify-between pb-4 border-b border-[#C69214]/20 gap-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center text-emerald-400 font-bold border border-slate-850">
+                        <div className="w-10 h-10 rounded-full bg-[#2A0D27] flex items-center justify-center text-[#C69214] font-bold border border-[#C69214]/15">
                           <User className="h-5 w-5" />
                         </div>
                         <div>
-                          <h4 className="font-bold text-slate-200 text-sm">
+                          <h4 className="font-bold text-white/90 text-sm">
                             {searchEmployee ? searchEmployee.name : '-'}
                           </h4>
-                          <p className="text-xs text-slate-500">
+                          <p className="text-xs text-white/45">
                             {searchEmployee 
                               ? `ฝ่าย: ${searchEmployee.department} • กอง: ${searchEmployee.division}` 
                               : 'กรอกรหัสพนักงานที่ต้องการสืบค้นข้อมูลด้านบน'}
@@ -1712,8 +1711,8 @@ CREATE TABLE submissions (
                         </div>
                       </div>
                       <div className="text-left sm:text-right">
-                        <span className="text-[10px] text-slate-500 block">ยอดรวมแคลอรี่อนุมัติแล้ว</span>
-                        <span className="text-lg font-bold text-emerald-400 font-mono">
+                        <span className="text-[10px] text-white/45 block">ยอดรวมแคลอรี่อนุมัติแล้ว</span>
+                        <span className="text-lg font-bold text-[#C69214] font-mono">
                           {searchApprovedKcal.toLocaleString()} kcal
                         </span>
                       </div>
@@ -1722,36 +1721,36 @@ CREATE TABLE submissions (
                     <div className="mt-4 overflow-x-auto">
                       <table className="w-full text-left text-xs border-collapse">
                         <thead>
-                          <tr className="text-slate-400 border-b border-slate-800 font-semibold font-mono">
+                          <tr className="text-white/60 border-b border-[#C69214]/20 font-semibold font-mono">
                             <th className="py-2.5">วันและเวลาบันทึก</th>
                             <th className="py-2.5">ประเภทกิจกรรม</th>
                             <th className="py-2.5">แคลอรี่สกัดได้</th>
                             <th className="py-2.5">ผลการตรวจสอบ</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-900/60 font-mono">
+                        <tbody className="divide-y divide-[#2A0D27]/60 font-mono">
                           {searchSubmissions.length === 0 ? (
                             <tr>
-                              <td colSpan={4} className="text-center py-6 text-slate-500 font-sans">
+                              <td colSpan={4} className="text-center py-6 text-white/45 font-sans">
                                 {searchId.trim() ? 'ไม่พบข้อมูลประวัติการส่งออกกำลังกาย' : 'ไม่มีประวัติแสดงผล'}
                               </td>
                             </tr>
                           ) : (
                             [...searchSubmissions].reverse().map(sub => {
-                              let statusStyles = "text-slate-400 bg-slate-900 border-slate-800";
+                              let statusStyles = "text-white/60 bg-[#2A0D27] border-[#C69214]/20";
                               let statusText = "รออนุมัติ";
                               if (sub.status === 'approved') {
-                                statusStyles = "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
+                                statusStyles = "text-[#C69214] bg-[#C69214]/10 border-[#C69214]/20";
                                 statusText = "อนุมัติแล้ว";
                               } else if (sub.status === 'rejected') {
                                 statusStyles = "text-rose-400 bg-rose-500/10 border-rose-500/20";
                                 statusText = "ปฏิเสธ";
                               }
                               return (
-                                <tr key={sub.id} className="hover:bg-slate-900/20">
-                                  <td className="py-3 text-slate-300">{sub.timestamp}</td>
-                                  <td className="py-3 text-slate-200 font-sans">{sub.activityType}</td>
-                                  <td className="py-3 font-bold text-slate-100">{sub.kcal} kcal</td>
+                                <tr key={sub.id} className="hover:bg-[#2A0D27]/20">
+                                  <td className="py-3 text-white/75">{sub.timestamp}</td>
+                                  <td className="py-3 text-white/90 font-sans">{sub.activityType}</td>
+                                  <td className="py-3 font-bold text-white">{sub.kcal} kcal</td>
                                   <td className="py-3">
                                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-semibold border ${statusStyles} font-sans`}>
                                       {statusText}
@@ -1772,21 +1771,21 @@ CREATE TABLE submissions (
             {/* TAB 3: ADMIN APPROVAL QUEUE */}
             {activeTab === 'admin-portal' && (
               isAdminAuthenticated ? (
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 pb-6 border-b border-slate-800">
+              <div className="bg-[#2A0D27] border border-[#C69214]/20 rounded-2xl p-6">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 pb-6 border-b border-[#C69214]/20">
                   <div>
-                    <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2 m-0">
-                      <ShieldCheck className="h-6 w-6 text-emerald-400" />
+                    <h2 className="text-xl font-bold text-white flex items-center gap-2 m-0">
+                      <ShieldCheck className="h-6 w-6 text-[#C69214]" />
                       ระบบควบคุม: งานอนุมัติสถิติประจำวัน
                     </h2>
-                    <p className="text-xs text-slate-400 mt-1 mb-0">
+                    <p className="text-xs text-white/60 mt-1 mb-0">
                       ตรวจสอบความถูกต้องสอดคล้องของหลักฐานภาพนาฬิกา และตัดสินใจบันทึกคะแนนเข้าสู่ระบบส่วนกลาง
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
                     <button 
                       onClick={handleApproveAll}
-                      className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-emerald-500/10 transition-colors flex items-center gap-1.5"
+                      className="px-4 py-2.5 bg-[#C69214] hover:bg-[#B58112] text-[#2A0D27] font-bold text-xs rounded-xl shadow-lg shadow-[#C69214]/10 transition-colors flex items-center gap-1.5"
                     >
                       <Check className="h-4 w-4 stroke-[3]" />
                       <span>อนุมัติทั้งหมดในคิว ({pendingQueue.length})</span>
@@ -1794,7 +1793,7 @@ CREATE TABLE submissions (
                     <button
                       type="button"
                       onClick={handleAdminLogout}
-                      className="px-3 py-2.5 bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-slate-200 font-bold text-xs rounded-xl border border-slate-800 transition-colors flex items-center gap-1.5"
+                      className="px-3 py-2.5 bg-[#160817] hover:bg-[#3A1536] text-white/60 hover:text-white/90 font-bold text-xs rounded-xl border border-[#C69214]/20 transition-colors flex items-center gap-1.5"
                     >
                       <LogOut className="h-4 w-4" />
                       ออกจากระบบ
@@ -1805,38 +1804,38 @@ CREATE TABLE submissions (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
                     <thead>
-                      <tr className="border-b border-slate-850 text-slate-400 text-xs bg-slate-950/40 font-semibold">
+                      <tr className="border-b border-[#C69214]/15 text-white/60 text-xs bg-[#160817]/40 font-semibold">
                         <th className="py-4 px-4">ชื่อพนักงาน / สังกัด</th>
                         <th className="py-4 px-4">ประเภทกิจกรรม</th>
                         <th className="py-4 px-4">หลักฐานภาพถ่าย</th>
-                        <th className="py-4 px-4 text-emerald-400 font-mono">Kcal</th>
+                        <th className="py-4 px-4 text-[#C69214] font-mono">Kcal</th>
                         <th className="py-4 px-4">ผลการแฮชสแกน</th>
                         <th className="py-4 px-4 text-center">จัดการคำขอ</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800/50 text-sm font-sans">
+                    <tbody className="divide-y divide-[#C69214]/50 text-sm font-sans">
                       {pendingQueue.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="py-16 text-center text-slate-500">
+                          <td colSpan={6} className="py-16 text-center text-white/45">
                             <div className="flex flex-col items-center justify-center gap-2">
-                              <ShieldCheck className="h-8 w-8 text-slate-700" />
+                              <ShieldCheck className="h-8 w-8 text-white/25" />
                               <span className="font-semibold text-sm">ไม่มีสถิติรอดำเนินการในขณะนี้</span>
-                              <p className="text-xs text-slate-600">สถิติทั้งหมดได้รับการตรวจสอบเรียบร้อยแล้ว</p>
+                              <p className="text-xs text-white/35">สถิติทั้งหมดได้รับการตรวจสอบเรียบร้อยแล้ว</p>
                             </div>
                           </td>
                         </tr>
                       ) : (
                         pendingQueue.map(sub => (
-                          <tr key={sub.id} className="hover:bg-slate-950/20 transition-colors">
+                          <tr key={sub.id} className="hover:bg-[#160817]/20 transition-colors">
                             <td className="py-4 px-4">
-                              <div className="font-bold text-slate-200">{sub.name}</div>
-                              <div className="text-xs text-slate-400 font-mono">
+                              <div className="font-bold text-white/90">{sub.name}</div>
+                              <div className="text-xs text-white/60 font-mono">
                                 {sub.empId} • {sub.department} ({sub.division})
                               </div>
                             </td>
-                            <td className="py-4 px-4 text-slate-300">
+                            <td className="py-4 px-4 text-white/75">
                               <div className="flex items-center gap-2">
-                                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                                <span className="w-2 h-2 rounded-full bg-[#C69214]"></span>
                                 <span>{sub.activityType}</span>
                               </div>
                             </td>
@@ -1845,19 +1844,19 @@ CREATE TABLE submissions (
                                 href={sub.imageUrl} 
                                 target="_blank" 
                                 rel="noreferrer"
-                                className="block w-16 h-12 rounded-lg overflow-hidden border border-slate-800 hover:scale-150 hover:border-emerald-500 transition-all cursor-zoom-in relative bg-slate-950"
+                                className="block w-16 h-12 rounded-lg overflow-hidden border border-[#C69214]/20 hover:scale-150 hover:border-[#C69214] transition-all cursor-zoom-in relative bg-[#160817]"
                               >
                                 <img src={sub.imageUrl} className="w-full h-full object-contain" alt="Verification proof" />
                               </a>
                             </td>
-                            <td className="py-4 px-4 font-mono font-bold text-emerald-400 text-lg">
+                            <td className="py-4 px-4 font-mono font-bold text-[#C69214] text-lg">
                               {sub.kcal}
                             </td>
-                            <td className="py-4 px-4 font-mono text-xs text-slate-400">
+                            <td className="py-4 px-4 font-mono text-xs text-white/60">
                               <div className="truncate max-w-[120px]" title={sub.imageHash}>
                                 Hash: {sub.imageHash?.substring(0, 12)}...
                               </div>
-                              <div className="text-[10px] text-emerald-500 font-semibold flex items-center gap-0.5 mt-0.5">
+                              <div className="text-[10px] text-[#C69214] font-semibold flex items-center gap-0.5 mt-0.5">
                                 <Calendar className="h-3 w-3" />
                                 {sub.timestamp}
                               </div>
@@ -1866,7 +1865,7 @@ CREATE TABLE submissions (
                               <div className="flex justify-center gap-2">
                                 <button 
                                   onClick={() => handleApprove(sub.id)}
-                                  className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs rounded-lg transition-colors flex items-center gap-1"
+                                  className="px-3 py-1.5 bg-[#C69214] hover:bg-[#B58112] text-[#2A0D27] font-bold text-xs rounded-lg transition-colors flex items-center gap-1"
                                 >
                                   <Check className="h-3.5 w-3.5 stroke-[3]" /> อนุมัติ
                                 </button>
@@ -1886,37 +1885,37 @@ CREATE TABLE submissions (
                 </div>
               </div>
               ) : (
-              <div className="max-w-md mx-auto bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+              <div className="max-w-md mx-auto bg-[#2A0D27] border border-[#C69214]/20 rounded-2xl p-6 shadow-xl">
                 <div className="text-center mb-6">
-                  <div className="w-12 h-12 rounded-full bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto mb-3 text-emerald-400">
+                  <div className="w-12 h-12 rounded-full bg-[#160817] border border-[#C69214]/20 flex items-center justify-center mx-auto mb-3 text-[#C69214]">
                     <LockKeyhole className="h-5 w-5" />
                   </div>
-                  <h2 className="text-xl font-bold text-slate-100 m-0">เข้าสู่หลังบ้าน</h2>
-                  <p className="text-xs text-slate-400 mt-2 mb-0">
+                  <h2 className="text-xl font-bold text-white m-0">เข้าสู่หลังบ้าน</h2>
+                  <p className="text-xs text-white/60 mt-2 mb-0">
                     สำหรับผู้ดูแลระบบเพื่อตรวจสอบและอนุมัติข้อมูลกิจกรรม
                   </p>
                 </div>
 
                 <form onSubmit={handleAdminLogin} className="space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-2">อีเมลผู้ดูแลระบบ</label>
+                    <label className="block text-xs font-semibold text-white/60 mb-2">อีเมลผู้ดูแลระบบ</label>
                     <input
                       type="email"
                       value={adminEmail}
                       onChange={(e) => setAdminEmail(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-100 focus:outline-none focus:border-emerald-500/60"
+                      className="w-full bg-[#160817] border border-[#C69214]/20 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-[#C69214]/60"
                       placeholder="admin@pea.co.th"
                       autoComplete="username"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-2">รหัสผ่าน</label>
+                    <label className="block text-xs font-semibold text-white/60 mb-2">รหัสผ่าน</label>
                     <input
                       type="password"
                       value={adminPassword}
                       onChange={(e) => setAdminPassword(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-100 focus:outline-none focus:border-emerald-500/60"
+                      className="w-full bg-[#160817] border border-[#C69214]/20 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-[#C69214]/60"
                       placeholder="••••••••"
                       autoComplete="current-password"
                     />
@@ -1930,7 +1929,7 @@ CREATE TABLE submissions (
 
                   <button
                     type="submit"
-                    className="w-full bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold py-3 rounded-xl text-sm transition-colors"
+                    className="w-full bg-[#C69214] hover:bg-[#B58112] text-[#2A0D27] font-bold py-3 rounded-xl text-sm transition-colors"
                   >
                     เข้าสู่ระบบหลังบ้าน
                   </button>
@@ -1941,32 +1940,32 @@ CREATE TABLE submissions (
 
             {/* TAB 4: SYSTEM SPECIFICATION */}
             {activeTab === 'system-spec' && (
-              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-emerald-500 to-teal-400"></div>
+              <div className="bg-[#2A0D27] border border-[#C69214]/20 rounded-3xl p-6 md:p-8 shadow-xl relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-[#C69214] to-[#72246C]"></div>
                 
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-6 border-b border-slate-800">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-6 border-b border-[#C69214]/20">
                   <div>
-                    <h2 className="text-xl font-bold text-emerald-400 flex items-center gap-2 m-0">
+                    <h2 className="text-xl font-bold text-[#C69214] flex items-center gap-2 m-0">
                       <FileCode className="h-6 w-6" />
                       เอกสารความต้องการระบบและการจัดทำ (System Specifications)
                     </h2>
-                    <p className="text-xs text-slate-400 mt-1 mb-0">
+                    <p className="text-xs text-white/60 mt-1 mb-0">
                       รายละเอียดโครงสร้างสเปกสำหรับเซ็ตอัป Supabase ฐานข้อมูล และ Storage จริงด้วยตนเอง
                     </p>
                   </div>
                   <button 
                     onClick={handleDownloadSpec}
-                    className="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-5 py-2.5 rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-emerald-500/10 transition-all"
+                    className="bg-[#C69214] hover:bg-[#B58112] text-[#2A0D27] font-bold px-5 py-2.5 rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-[#C69214]/10 transition-all"
                   >
                     <UploadCloud className="h-4 w-4" /> 
                     ดาวน์โหลดไฟล์ specification.md
                   </button>
                 </div>
 
-                <div className="prose prose-invert max-w-none text-slate-350 text-sm space-y-6 mt-6 leading-relaxed">
+                <div className="prose prose-invert max-w-none text-white/75 text-sm space-y-6 mt-6 leading-relaxed">
                   <div>
-                    <h3 className="text-base font-bold text-slate-100 mb-2 font-mono border-b border-slate-800 pb-2">1. Tech Stack (0 Baht budget stack)</h3>
-                    <ul className="list-disc pl-5 space-y-1.5 text-slate-400 text-xs">
+                    <h3 className="text-base font-bold text-white mb-2 font-mono border-b border-[#C69214]/20 pb-2">1. Tech Stack (0 Baht budget stack)</h3>
+                    <ul className="list-disc pl-5 space-y-1.5 text-white/60 text-xs">
                       <li><b>Frontend Platform:</b> React 19 + TypeScript + Tailwind CSS โฮสต์ฟรีบน Vercel</li>
                       <li><b>Database Engines:</b> Supabase (PostgreSQL) Free Tier สำหรับข้อมูลหลักและอันดับคะแนน</li>
                       <li><b>Proof Storage Bucket:</b> Supabase Storage (เก็บไฟล์รูปหลักฐาน)</li>
@@ -1976,38 +1975,38 @@ CREATE TABLE submissions (
                   </div>
 
                   <div>
-                    <h3 className="text-base font-bold text-slate-100 mb-2 font-mono border-b border-slate-800 pb-2">2. Database Schema SQL Definitions</h3>
-                    <div className="bg-slate-950 p-4 rounded-xl font-mono text-[11px] text-teal-400 border border-slate-800 space-y-4">
+                    <h3 className="text-base font-bold text-white mb-2 font-mono border-b border-[#C69214]/20 pb-2">2. Database Schema SQL Definitions</h3>
+                    <div className="bg-[#160817] p-4 rounded-xl font-mono text-[11px] text-[#C69214] border border-[#C69214]/20 space-y-4">
                       <div>
-                        <span className="text-slate-500">-- ตารางข้อมูลสังกัดและชื่อพนักงาน</span><br />
-                        <span className="text-emerald-400">CREATE TABLE</span> employees (<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;emp_id <span className="text-slate-100">VARCHAR(50) PRIMARY KEY</span>,<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;name <span className="text-slate-100">VARCHAR(255) NOT NULL</span>,<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;department <span className="text-slate-100">VARCHAR(255) NOT NULL</span>,<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;division <span className="text-slate-100">VARCHAR(255) NOT NULL</span>,<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;created_at <span className="text-slate-100">TIMESTAMP WITH TIME ZONE DEFAULT NOW()</span><br />
+                        <span className="text-white/45">-- ตารางข้อมูลสังกัดและชื่อพนักงาน</span><br />
+                        <span className="text-[#C69214]">CREATE TABLE</span> employees (<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;emp_id <span className="text-white">VARCHAR(50) PRIMARY KEY</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;name <span className="text-white">VARCHAR(255) NOT NULL</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;department <span className="text-white">VARCHAR(255) NOT NULL</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;division <span className="text-white">VARCHAR(255) NOT NULL</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;created_at <span className="text-white">TIMESTAMP WITH TIME ZONE DEFAULT NOW()</span><br />
                         );
                       </div>
-                      <div className="border-t border-slate-800 pt-2">
-                        <span className="text-slate-500">-- ตารางบันทึกการส่งคะแนนและการตรวจสอบ</span><br />
-                        <span className="text-emerald-400">CREATE TABLE</span> submissions (<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;id <span className="text-slate-100">BIGSERIAL PRIMARY KEY</span>,<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;emp_id <span className="text-slate-100">VARCHAR(50) REFERENCES</span> employees(emp_id),<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;activity_type <span className="text-slate-100">VARCHAR(100) NOT NULL</span>,<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;kcal <span className="text-slate-100">INT NOT NULL</span>,<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;image_url <span className="text-slate-100">TEXT NOT NULL</span>,<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;image_hash <span className="text-slate-100">VARCHAR(64) NOT NULL</span>,<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;scanned_date <span className="text-slate-100">DATE NOT NULL</span>,<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;status <span className="text-slate-100">VARCHAR(50) DEFAULT 'pending'</span>,<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;created_at <span className="text-slate-100">TIMESTAMP WITH TIME ZONE DEFAULT NOW()</span><br />
+                      <div className="border-t border-[#C69214]/20 pt-2">
+                        <span className="text-white/45">-- ตารางบันทึกการส่งคะแนนและการตรวจสอบ</span><br />
+                        <span className="text-[#C69214]">CREATE TABLE</span> submissions (<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;id <span className="text-white">BIGSERIAL PRIMARY KEY</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;emp_id <span className="text-white">VARCHAR(50) REFERENCES</span> employees(emp_id),<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;activity_type <span className="text-white">VARCHAR(100) NOT NULL</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;kcal <span className="text-white">INT NOT NULL</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;image_url <span className="text-white">TEXT NOT NULL</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;image_hash <span className="text-white">VARCHAR(64) NOT NULL</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;scanned_date <span className="text-white">DATE NOT NULL</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;status <span className="text-white">VARCHAR(50) DEFAULT 'pending'</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;created_at <span className="text-white">TIMESTAMP WITH TIME ZONE DEFAULT NOW()</span><br />
                         );
                       </div>
                     </div>
                   </div>
 
                   <div>
-                    <h3 className="text-base font-bold text-slate-100 mb-2 font-mono border-b border-slate-800 pb-2">3. Business Verification Rules</h3>
-                    <ul className="list-decimal pl-5 space-y-2 text-slate-400 text-xs">
+                    <h3 className="text-base font-bold text-white mb-2 font-mono border-b border-[#C69214]/20 pb-2">3. Business Verification Rules</h3>
+                    <ul className="list-decimal pl-5 space-y-2 text-white/60 text-xs">
                       <li><b>กฎจำกัดส่งรายวัน:</b> ตรวจสอบ `scanned_date` ในฐานข้อมูล โดยพนักงาน 1 รหัสต้องส่งได้สูงสุด 1 รายการ ต่อวัน (ยกเว้นรายการเดิมถูก Reject สามารถส่งใหม่ได้)</li>
                       <li><b>ตรวจสอบการเวียนรูปภาพหลักฐาน:</b> เมื่อผู้ใช้อัปโหลดรูป โปรแกรมจะทำ Hash หากค่าแฮชรูปตรงกับที่เคยมีอยู่ในตาราง ระบบจะไม่ยอมรับเพื่อสกัดการทุจริต</li>
                       <li><b>การจัดลีดเดอร์บอร์ด:</b> สถิติคำนวณจากตาราง submissions เฉพาะแถวที่มีสเตตัส `approved` เท่านั้น</li>
@@ -2023,21 +2022,21 @@ CREATE TABLE submissions (
       {/* TOAST POPUP */}
       {toast && (
         <div className="fixed bottom-6 right-6 z-50 transform transition-all duration-300 translate-y-0 opacity-100">
-          <div className={`border rounded-2xl p-4 shadow-2xl flex items-center gap-3 bg-slate-900 ${
-            toast.type === 'success' ? 'border-emerald-500/30 text-emerald-400' : 'border-rose-500/30 text-rose-400'
+          <div className={`border rounded-2xl p-4 shadow-2xl flex items-center gap-3 bg-[#2A0D27] ${
+            toast.type === 'success' ? 'border-[#C69214]/30 text-[#C69214]' : 'border-rose-500/30 text-rose-400'
           }`}>
             {toast.type === 'success' ? <Check className="h-5 w-5" /> : <AlertCircle className="h-5 w-5" />}
             <div>
-              <p className="font-bold text-sm text-slate-200 m-0">{toast.title}</p>
-              <p className="text-xs text-slate-400 m-0 mt-0.5">{toast.desc}</p>
+              <p className="font-bold text-sm text-white/90 m-0">{toast.title}</p>
+              <p className="text-xs text-white/60 m-0 mt-0.5">{toast.desc}</p>
             </div>
           </div>
         </div>
       )}
 
       {/* FOOTER */}
-      <footer className="bg-slate-900 border-t border-slate-800 py-4 text-center text-slate-500 text-xs">
-        <p className="m-0">© 2026 FitVerify AI Tracker Package • All Rights Reserved</p>
+      <footer className="bg-[#2A0D27] border-t border-[#C69214]/20 py-4 text-center text-white/45 text-xs">
+        <p className="m-0">2026 PEA Titan Move • All Rights Reserved</p>
       </footer>
     </div>
   );

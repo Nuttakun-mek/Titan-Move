@@ -1,8 +1,11 @@
 @import "tailwindcss";
 
 body {
-  background-color: #020617;
-  color: #f3f4f6;
+  background:
+    radial-gradient(circle at top left, rgba(198, 146, 20, 0.16), transparent 28rem),
+    radial-gradient(circle at top right, rgba(114, 36, 108, 0.38), transparent 32rem),
+    #160817;
+  color: #ffffff;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
@@ -16,12 +19,12 @@ body {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #0f172a;
+  background: #2a0d27;
 }
 ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: #72246c;
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #10b981;
+  background: #c69214;
 }
