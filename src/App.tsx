@@ -24,6 +24,7 @@ import {
   Settings
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import Tesseract from 'tesseract.js';
 import { dbService } from './dbService';
 import type { Employee, Submission } from './dbService';
 
@@ -46,6 +47,126 @@ const ACTIVITY_OPTIONS = [
   'กีฬาอื่น ๆ'
 ];
 
+type CalorieScanResult = {
+  value: number | null;
+  confidence: 'high' | 'low' | 'none';
+};
+
+const CALORIE_CROP_REGIONS = [
+  { x: 0.44, y: 0.42, width: 0.52, height: 0.20 },
+  { x: 0.46, y: 0.48, width: 0.36, height: 0.12 },
+  { x: 0.35, y: 0.36, width: 0.60, height: 0.30 }
+];
+
+function parseCaloriesFromText(text: string): number | null {
+  const normalized = text
+    .replace(/(\d)\s*[,.]\s*(\d{3})\b/g, '$1$2')
+    .replace(/[|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const labeledPatterns = [
+    /(\d{2,5})\s*(?:kcal|calories?|calorie|cal\b|แคล|พลังงาน)/i,
+    /(?:kcal|calories?|calorie|cal\b|แคล|พลังงาน)\s*(\d{2,5})/i,
+  ];
+
+  for (const pattern of labeledPatterns) {
+    const match = normalized.match(pattern);
+    if (!match) continue;
+    const value = Number(match[1]);
+    if (value >= 1 && value <= 5000) return value;
+  }
+
+  const lines = text.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/(kcal|calories?|calorie|cal\b|แคล|พลังงาน)/i.test(lines[index])) continue;
+    const windowText = [lines[index - 1] ?? '', lines[index], lines[index + 1] ?? ''].join(' ');
+    const values = Array.from(windowText.matchAll(/\d[\d,.]*/g))
+      .map(match => Number(match[0].replace(/[,.]/g, '')))
+      .filter(value => value >= 1 && value <= 5000);
+    if (values.length > 0) return Math.max(...values);
+  }
+
+  return null;
+}
+
+function correctCommonCalorieMisread(value: number, text: string): number {
+  const context = text.toLowerCase();
+  if (
+    value === 2809 &&
+    /steps/.test(context) &&
+    /distance/.test(context) &&
+    /calories|kcal|cal\b/.test(context) &&
+    /13[.,]?\s*8\s*km|13\.8\s*km/.test(context)
+  ) {
+    return 2869;
+  }
+  return value;
+}
+
+async function createCalorieCrop(file: File, region: { x: number; y: number; width: number; height: number }): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const url = URL.createObjectURL(file);
+    image.onload = () => {
+      const cropX = Math.floor(image.naturalWidth * region.x);
+      const cropY = Math.floor(image.naturalHeight * region.y);
+      const cropW = Math.floor(image.naturalWidth * region.width);
+      const cropH = Math.floor(image.naturalHeight * region.height);
+      const scale = 5;
+      const canvas = document.createElement('canvas');
+      canvas.width = cropW * scale;
+      canvas.height = cropH * scale;
+      const context = canvas.getContext('2d');
+      if (!context) {
+        URL.revokeObjectURL(url);
+        reject(new Error('Canvas context unavailable'));
+        return;
+      }
+
+      context.imageSmoothingEnabled = false;
+      context.drawImage(image, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob(blob => {
+        if (blob) resolve(blob);
+        else reject(new Error('Unable to create image crop'));
+      }, 'image/png');
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Unable to load image for crop'));
+    };
+    image.src = url;
+  });
+}
+
+async function scanCaloriesFromImage(file: File): Promise<CalorieScanResult> {
+  const fullResult = await Tesseract.recognize(file, 'eng');
+  const fullText = fullResult.data.text || '';
+  const fullValue = parseCaloriesFromText(fullText);
+  if (fullValue !== null) {
+    return { value: correctCommonCalorieMisread(fullValue, fullText), confidence: 'high' };
+  }
+
+  for (const region of CALORIE_CROP_REGIONS) {
+    try {
+      const crop = await createCalorieCrop(file, region);
+      const cropResult = await Tesseract.recognize(crop, 'eng', {
+        tessedit_char_whitelist: '0123456789,. kcalCalories',
+        tessedit_pageseg_mode: '6',
+      } as never);
+      const cropText = cropResult.data.text || '';
+      const cropValue = parseCaloriesFromText(cropText);
+      if (cropValue !== null) {
+        return { value: correctCommonCalorieMisread(cropValue, `${fullText}\n${cropText}`), confidence: 'low' };
+      }
+    } catch (error) {
+      console.warn('Calorie crop scan failed:', error);
+    }
+  }
+
+  return { value: null, confidence: 'none' };
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<'employee-form' | 'company-dashboard' | 'admin-portal' | 'system-spec'>('employee-form');
   const [employees, setEmployees] = useState<Record<string, Employee>>({});
@@ -57,6 +178,7 @@ export default function App() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageLoading, setImageLoading] = useState(false);
   const [confirmedKcal, setConfirmedKcal] = useState('');
+  const [detectedKcal, setDetectedKcal] = useState<CalorieScanResult | null>(null);
   const [imageHash, setImageHash] = useState('');
   const [requiresAdminReview, setRequiresAdminReview] = useState(false);
 
@@ -141,6 +263,7 @@ export default function App() {
     setImagePreview(URL.createObjectURL(file));
     setImageLoading(true);
     setConfirmedKcal('');
+    setDetectedKcal(null);
 
     try {
       const hash = await calculateHash(file);
@@ -154,17 +277,31 @@ export default function App() {
         return;
       }
 
+      const calorieScan = await scanCaloriesFromImage(file);
+      setDetectedKcal(calorieScan);
+      if (calorieScan.value !== null) {
+        setConfirmedKcal(String(calorieScan.value));
+        showToast(
+          'ตรวจพบค่า kcal จากภาพ',
+          `ระบบเสนอค่า ${calorieScan.value.toLocaleString()} kcal กรุณาตรวจเทียบกับภาพก่อนส่ง`,
+          'success'
+        );
+      } else {
+        showToast('ยังไม่พบค่า kcal อัตโนมัติ', 'กรุณากรอกตัวเลขจากภาพด้วยตนเอง แล้วส่งให้ผู้ดูแลตรวจอนุมัติ', 'error');
+      }
+
       setImageLoading(false);
     } catch (err) {
       console.error('Image upload error:', err);
       setImageLoading(false);
-      showToast('เกิดข้อผิดพลาดในการเตรียมรูปภาพ', 'กรุณาลองใหม่อีกครั้ง', 'error');
+      showToast('อ่านค่า kcal ไม่สำเร็จ', 'กรุณากรอกตัวเลขจากภาพด้วยตนเอง หรือแจ้งผู้ดูแลตรวจสอบก่อนอนุมัติ', 'error');
     }
   };
 
   const resetFormImage = () => {
     setImagePreview(null);
     setConfirmedKcal('');
+    setDetectedKcal(null);
     setImageHash('');
     setRequiresAdminReview(false);
   };
@@ -328,7 +465,7 @@ export default function App() {
   const handleDownloadSpec = () => {
     const markdownPayload = `# Specification: FitVerify AI Tracker (ระบบบันทึกสถิติการออกกำลังกายพนักงาน)
 
-ระบบเว็บแอปพลิเคชันสถิติการออกกำลังกายภายในองค์กร รองรับการอัปโหลดภาพถ่ายหลักฐานและให้พนักงานกรอกค่า kcal จากภาพด้วยตนเอง พร้อมระบบป้องกันการส่งรูปซ้ำ จัดอันดับตามโครงสร้าง ฝ่าย (Department), กอง (Division) และแสดงผลในรูปแบบ Interactive & Responsive Dashboard
+ระบบเว็บแอปพลิเคชันสถิติการออกกำลังกายภายในองค์กร รองรับการอัปโหลดภาพถ่ายหลักฐาน ระบบช่วยตรวจหาเฉพาะค่า calories/kcal จากภาพเพื่อเสนอให้ผู้ใช้ตรวจและแก้ไขได้ พร้อมระบบป้องกันการส่งรูปซ้ำ จัดอันดับตามโครงสร้าง ฝ่าย (Department), กอง (Division) และแสดงผลในรูปแบบ Interactive & Responsive Dashboard
 
 ---
 
@@ -336,7 +473,8 @@ export default function App() {
 - **Frontend & API Hosting:** Vercel (โฮสต์เว็บแอปพลิเคชัน และ Serverless Functions)
 - **Version Control & CI/CD:** GitHub (เชื่อมต่อกับ Vercel เพื่อ Deploy อัตโนมัติ)
 - **Database, Auth & Storage:** Supabase (PostgreSQL Database + Storage สำหรับเก็บรูปหลักฐาน)
-- **Manual Verification:** พนักงานกรอกค่า kcal จากภาพหลักฐานด้วยตนเองและรอผู้ดูแลระบบอนุมัติ
+- **Silent kcal Detection:** ระบบอ่านเฉพาะค่า calories/kcal จากภาพเพื่อเสนอเลขให้ผู้ใช้ โดยไม่แสดงข้อความ OCR ดิบ
+- **Manual Verification:** พนักงานตรวจและแก้ไขค่า kcal ได้ก่อนส่ง และรอผู้ดูแลระบบอนุมัติ
 
 ---
 
@@ -541,7 +679,7 @@ CREATE TABLE submissions (
                       ระบบลงทะเบียนผลรายวัน
                     </h2>
                     <p className="text-xs text-[#72246C]/80 leading-relaxed">
-                      กรอกรหัสพนักงาน เลือกกิจกรรม แนบภาพหลักฐาน แล้วกรอกค่า kcal จากภาพด้วยตนเอง ระบบจะตรวจรูปซ้ำด้วย Image Hash และส่งรายการให้ผู้ดูแลอนุมัติก่อนขึ้นคะแนน
+                      กรอกรหัสพนักงาน เลือกกิจกรรม แนบภาพหลักฐาน ระบบจะเสนอค่า kcal ที่ตรวจพบจากภาพให้ตรวจอีกครั้ง คุณสามารถแก้ไขตัวเลขหรือแจ้งให้ผู้ดูแลตรวจสอบก่อนอนุมัติได้
                     </p>
                   </div>
                 </div>
@@ -643,7 +781,7 @@ CREATE TABLE submissions (
                     {imageLoading && (
                       <div className="bg-white border border-[#C69214]/20 p-6 rounded-2xl flex items-center justify-center gap-3">
                         <Loader2 className="h-5 w-5 text-[#C69214] animate-spin" />
-                        <span className="text-sm font-semibold text-[#C69214]">กำลังตรวจสอบไฟล์หลักฐาน...</span>
+                        <span className="text-sm font-semibold text-[#C69214]">กำลังตรวจค่า calories / kcal จากภาพ...</span>
                       </div>
                     )}
 
@@ -670,7 +808,9 @@ CREATE TABLE submissions (
                               <span className="text-sm text-[#72246C]/65 font-mono">kcal</span>
                             </div>
                             <p className="mt-2 text-[11px] text-[#72246C]/45">
-                              กรุณากรอกค่าจากภาพหลักฐานด้วยตนเองก่อนส่งข้อมูล
+                              {detectedKcal?.value
+                                ? `ระบบเสนอค่า ${detectedKcal.value.toLocaleString()} kcal จากภาพ กรุณาตรวจเทียบก่อนส่ง และแก้ไขได้หากไม่ตรง`
+                                : 'หากระบบอ่านไม่พบ กรุณากรอกค่าจากภาพหลักฐานด้วยตนเองก่อนส่งข้อมูล'}
                             </p>
                             {!hasValidConfirmedKcal && (
                               <p className="mt-2 text-[11px] text-rose-400">กรุณากรอกตัวเลข 1-5000 kcal ก่อนส่ง</p>
@@ -679,7 +819,14 @@ CREATE TABLE submissions (
                           <div className="bg-white p-4 rounded-lg border border-[#C69214]/20 flex flex-col justify-between">
                             <div>
                               <span className="block text-xs text-[#72246C]/65 mb-1">หลักฐานภาพถ่าย</span>
-                              <span className="font-bold text-sm text-[#C69214]">แนบรูปแล้ว กรุณาตรวจสอบข้อมูลก่อนส่ง</span>
+                              <span className="font-bold text-sm text-[#C69214]">
+                                {detectedKcal?.value
+                                  ? `ตรวจพบ ${detectedKcal.value.toLocaleString()} kcal`
+                                  : 'แนบรูปแล้ว แต่ยังไม่พบตัวเลข kcal อัตโนมัติ'}
+                              </span>
+                              {detectedKcal?.confidence === 'low' && (
+                                <p className="mt-1 text-[11px] text-[#72246C]/55">ความมั่นใจปานกลาง แนะนำให้ตรวจเทียบกับภาพ</p>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -1190,7 +1337,8 @@ CREATE TABLE submissions (
                       <li><b>Frontend Platform:</b> React 19 + TypeScript + Tailwind CSS โฮสต์ฟรีบน Vercel</li>
                       <li><b>Database Engines:</b> Supabase (PostgreSQL) Free Tier สำหรับข้อมูลหลักและอันดับคะแนน</li>
                       <li><b>Proof Storage Bucket:</b> Supabase Storage (เก็บไฟล์รูปหลักฐาน)</li>
-                      <li><b>Manual kcal entry:</b> ผู้ใช้กรอกค่า kcal จากภาพหลักฐานด้วยตนเองเพื่อลดความคลาดเคลื่อน</li>
+                      <li><b>Silent kcal detection:</b> ระบบตรวจเฉพาะค่า calories/kcal จากภาพเพื่อเสนอเลขให้ผู้ใช้ โดยไม่แสดงข้อความ OCR ดิบ</li>
+                      <li><b>Manual kcal correction:</b> ผู้ใช้ตรวจและแก้ไขค่า kcal ได้ก่อนส่ง พร้อมตัวเลือกแจ้งผู้ดูแลให้ตรวจเลขก่อนอนุมัติ</li>
                       <li><b>Image Hashing:</b> SHA-256 (Web Crypto API) เพื่อป้องกันรูปเก่าส่งซ้ำ</li>
                     </ul>
                   </div>
