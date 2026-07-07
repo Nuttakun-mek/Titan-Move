@@ -76,6 +76,125 @@ async function preprocessImage(file: File): Promise<Blob> {
   });
 }
 
+type FocusedCaloriesResult = {
+  value: number;
+  text: string;
+};
+
+type CropRegion = {
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  preferLargest?: boolean;
+};
+
+const FITNESS_CALORIE_CROPS: CropRegion[] = [
+  { name: 'right-stat-card', x: 0.46, y: 0.43, width: 0.50, height: 0.20 },
+  { name: 'stats-row', x: 0.02, y: 0.42, width: 0.96, height: 0.24, preferLargest: true },
+  { name: 'middle-lower', x: 0.22, y: 0.34, width: 0.64, height: 0.32 },
+];
+
+function parseCaloriesFromFocusedText(text: string, preferLargest = false): number | null {
+  const normalized = normaliseCalorieText(text)
+    .replace(/(\d)\s*[,.]\s*(\d{3})\b/g, '$1$2')
+    .replace(/[|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const hasCaloriesLabel = /kcal|calories?|calorie|energy|burned?|แคล|พลังงาน/i.test(normalized);
+  const labeledPatterns = [
+    /(\d{2,5})\s*(?:kcal|calories?|calorie|cal\b|energy|burned?|แคล|พลังงาน)/i,
+    /(?:kcal|calories?|calorie|cal\b|energy|burned?|แคล|พลังงาน)\s*(\d{2,5})/i,
+  ];
+
+  for (const pattern of labeledPatterns) {
+    const match = normalized.match(pattern);
+    if (match) {
+      const value = parseInt(match[1], 10);
+      if (value >= 50 && value <= 5000) return value;
+    }
+  }
+
+  if (!hasCaloriesLabel && !preferLargest) return null;
+
+  const numbers = Array.from(normalized.matchAll(/\b\d{2,5}\b/g))
+    .map(match => parseInt(match[0], 10))
+    .filter(value => value >= 50 && value <= 5000);
+
+  if (numbers.length === 0) return null;
+  return Math.max(...numbers);
+}
+
+async function createFocusedOcrBlob(file: File, region: CropRegion): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+
+    img.onload = () => {
+      const cropX = Math.max(0, Math.floor(img.naturalWidth * region.x));
+      const cropY = Math.max(0, Math.floor(img.naturalHeight * region.y));
+      const cropW = Math.min(img.naturalWidth - cropX, Math.floor(img.naturalWidth * region.width));
+      const cropH = Math.min(img.naturalHeight - cropY, Math.floor(img.naturalHeight * region.height));
+      const scale = 4;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = cropW * scale;
+      canvas.height = cropH * scale;
+
+      const ctx = canvas.getContext('2d')!;
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+
+      for (let i = 0; i < data.length; i += 4) {
+        const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        const boosted = gray > 90 ? 0 : 255;
+        data[i] = boosted;
+        data[i + 1] = boosted;
+        data[i + 2] = boosted;
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+      canvas.toBlob(blob => {
+        if (blob) resolve(blob);
+        else reject(new Error(`Focused OCR crop failed: ${region.name}`));
+      }, 'image/png');
+    };
+
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+async function recognizeFocusedCalories(file: File): Promise<FocusedCaloriesResult | null> {
+  for (const region of FITNESS_CALORIE_CROPS) {
+    try {
+      const blob = await createFocusedOcrBlob(file, region);
+      const { data } = await Tesseract.recognize(blob, 'eng', {
+        logger: m => console.log(`Focused OCR (${region.name}):`, m),
+      });
+      const text = (data as any).text || '';
+      const value = parseCaloriesFromFocusedText(text, region.preferLargest);
+
+      console.log(`Focused OCR (${region.name}) text:`, text);
+      console.log(`Focused OCR (${region.name}) parsed kcal:`, value);
+
+      if (value !== null) {
+        return { value, text };
+      }
+    } catch (err) {
+      console.warn(`Focused OCR failed for ${region.name}:`, err);
+    }
+  }
+
+  return null;
+}
+
 // ─── Calorie Synonym Normaliser ───────────────────────────────────────────────
 /** Expand all known calorie synonyms to a single canonical token so that the
  *  scorer always sees "kcal" regardless of the OCR engine's output. */
@@ -721,7 +840,7 @@ export default function App() {
         ocrSource,
         'eng',
         { logger: m => console.log('Tesseract:', m) }
-      ).then(({ data }) => {
+      ).then(async ({ data }) => {
         const text = (data as any).text || '';
         const words = (data as any).words || [];
         console.log('OCR Raw Text:', text);
@@ -731,12 +850,17 @@ export default function App() {
         console.log('Cleaned OCR Text:', cleanedText);
 
         // Step 2 – smart extraction with synonym normalisation + row grouping
-        const detectedKcal = extractSmartCalories(cleanedText, text, activityType, words);
+        let detectedKcal = extractSmartCalories(cleanedText, text, activityType, words);
+        const focusedCalories = await recognizeFocusedCalories(file);
+        if (focusedCalories) {
+          detectedKcal = focusedCalories.value;
+          console.log('Focused calories override:', focusedCalories.value);
+        }
         console.log('Detected kcal:', detectedKcal);
 
         // Step 3 – validate date
         const dateCheck = parseDateFromText(cleanedText);
-        setOcrRawText(text);
+        setOcrRawText(focusedCalories ? `${text}\n\n[Focused Calories OCR]\n${focusedCalories.text}` : text);
         setIsDateValid(dateCheck.isValid);
         setOcrScannedDate(dateCheck.foundDateStr);
         setOcrResultKcal(detectedKcal);
