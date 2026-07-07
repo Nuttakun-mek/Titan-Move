@@ -31,9 +31,23 @@ import type { Employee, Submission } from './dbService';
 const DEFAULT_PREVIEW = 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=600';
 const ADMIN_EMAIL = 'admin@pea.co.th';
 const ADMIN_PASSWORD = 'Pea111*';
+const ACTIVITY_OPTIONS = [
+  'วิ่ง',
+  'เดิน',
+  'ปั่นจักรยาน',
+  'ยิม / ฟิตเนส',
+  'ปิงปอง',
+  'แบดมินตัน',
+  'เทนนิส',
+  'กอล์ฟ',
+  'เปตอง',
+  'บาสเกตบอล',
+  'ฟุตบอล / ฟุตซอล',
+  'กีฬาอื่น ๆ'
+];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'employee-form' | 'company-dashboard' | 'admin-portal' | 'system-spec'>('company-dashboard');
+  const [activeTab, setActiveTab] = useState<'employee-form' | 'company-dashboard' | 'admin-portal' | 'system-spec'>('employee-form');
   const [employees, setEmployees] = useState<Record<string, Employee>>({});
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,6 +58,7 @@ export default function App() {
   const [imageLoading, setImageLoading] = useState(false);
   const [confirmedKcal, setConfirmedKcal] = useState('');
   const [imageHash, setImageHash] = useState('');
+  const [requiresAdminReview, setRequiresAdminReview] = useState(false);
 
   // Search State
   const [searchId, setSearchId] = useState('');
@@ -55,6 +70,7 @@ export default function App() {
   const [adminPassword, setAdminPassword] = useState('');
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [adminLoginError, setAdminLoginError] = useState('');
+  const [adminKcalEdits, setAdminKcalEdits] = useState<Record<number, string>>({});
 
   useEffect(() => {
     async function loadData() {
@@ -105,7 +121,7 @@ export default function App() {
     setIsAdminAuthenticated(false);
     setAdminEmail('');
     setAdminPassword('');
-    setActiveTab('company-dashboard');
+    setActiveTab('employee-form');
     showToast('ออกจากหลังบ้านแล้ว', 'กลับสู่หน้าผู้ใช้งานทั่วไป', 'success');
   };
 
@@ -150,6 +166,7 @@ export default function App() {
     setImagePreview(null);
     setConfirmedKcal('');
     setImageHash('');
+    setRequiresAdminReview(false);
   };
 
   // Form submission handler
@@ -199,7 +216,8 @@ export default function App() {
       scannedDate: todayStr,
       status: 'pending' as const,
       timestamp: new Date().toISOString().replace('T', ' ').substring(0, 16),
-      imageHash: imageHash || 'local-' + Math.random().toString(36).substr(2, 9)
+      imageHash: imageHash || 'local-' + Math.random().toString(36).substr(2, 9),
+      requiresAdminReview
     };
 
     try {
@@ -218,7 +236,13 @@ export default function App() {
         colors: ['#10b981', '#14b8a6', '#3b82f6']
       });
 
-      showToast('ส่งผลงานสำเร็จ!', 'ข้อมูลบันทึกแคลอรี่รอผู้ดูแลระบบอนุมัติขึ้นกระดานคะแนน', 'success');
+      showToast(
+        'ส่งผลงานสำเร็จ!',
+        requiresAdminReview
+          ? 'ส่งคำขอให้ผู้ดูแลตรวจสอบค่า kcal แล้ว รายการจะขึ้นแจ้งเตือนในหลังบ้าน'
+          : 'ข้อมูลบันทึกแคลอรี่รอผู้ดูแลระบบอนุมัติขึ้นกระดานคะแนน',
+        'success'
+      );
     } catch (err) {
       console.error(err);
       showToast('บันทึกไม่สำเร็จ', 'ระบบขัดข้องกรุณาลองใหม่อีกครั้ง', 'error');
@@ -226,11 +250,28 @@ export default function App() {
   };
 
   // Admin Actions
-  const handleApprove = async (id: number) => {
+  const handleApprove = async (submission: Submission) => {
     try {
-      const success = await dbService.updateStatus(id, 'approved');
+      const editedKcal = Number(adminKcalEdits[submission.id] ?? submission.kcal);
+      if (!Number.isFinite(editedKcal) || editedKcal < 1 || editedKcal > 5000) {
+        showToast('กรุณาตรวจค่า kcal', 'ค่า kcal ต้องเป็นตัวเลข 1-5000 ก่อนอนุมัติ', 'error');
+        return;
+      }
+
+      const roundedKcal = Math.round(editedKcal);
+      if (roundedKcal !== submission.kcal || submission.requiresAdminReview) {
+        await dbService.updateKcal(submission.id, roundedKcal, false);
+        setSubmissions(prev => prev.map(s => s.id === submission.id ? { ...s, kcal: roundedKcal, requiresAdminReview: false } : s));
+      }
+
+      const success = await dbService.updateStatus(submission.id, 'approved');
       if (success) {
-        setSubmissions(prev => prev.map(s => s.id === id ? { ...s, status: 'approved' } : s));
+        setSubmissions(prev => prev.map(s => s.id === submission.id ? { ...s, status: 'approved', kcal: roundedKcal, requiresAdminReview: false } : s));
+        setAdminKcalEdits(prev => {
+          const next = { ...prev };
+          delete next[submission.id];
+          return next;
+        });
         
         confetti({
           particleCount: 50,
@@ -260,23 +301,23 @@ export default function App() {
   };
 
   const handleApproveAll = async () => {
-    const pendingCount = submissions.filter(s => s.status === 'pending').length;
-    if (pendingCount === 0) {
-      showToast('ไม่มีรายการค้างอนุมัติ', 'ไม่พบประวัติรอคิวพิจารณาเพิ่มเติม', 'error');
+    const normalPending = submissions.filter(s => s.status === 'pending' && !s.requiresAdminReview);
+    if (normalPending.length === 0) {
+      showToast('ไม่มีรายการที่อนุมัติรวดเร็วได้', 'รายการที่ขอให้ตรวจเลขต้องให้ผู้ดูแลตรวจและกดอนุมัติทีละรายการ', 'error');
       return;
     }
 
     try {
-      const approvedCount = await dbService.approveAll();
-      setSubmissions(prev => prev.map(s => s.status === 'pending' ? { ...s, status: 'approved' } : s));
-
+      await Promise.all(normalPending.map(sub => dbService.updateStatus(sub.id, 'approved')));
+      setSubmissions(prev => prev.map(s => s.status === 'pending' && !s.requiresAdminReview ? { ...s, status: 'approved' } : s));
+      
       confetti({
         particleCount: 150,
         spread: 80,
         origin: { y: 0.6 }
       });
 
-      showToast('อนุมัติรายการทั้งหมดแล้ว', `ทำการอนุมัติสถิติจำนวน ${approvedCount} คำขอเรียบร้อยแล้ว`, 'success');
+      showToast('อนุมัติรายการทั่วไปแล้ว', `ทำการอนุมัติสถิติจำนวน ${normalPending.length} คำขอเรียบร้อยแล้ว`, 'success');
     } catch (err) {
       console.error(err);
       showToast('ขัดข้องในการอนุมัติคิว', 'กรุณาลองใหม่อีกครั้ง', 'error');
@@ -323,6 +364,7 @@ CREATE TABLE submissions (
     image_hash VARCHAR(64) NOT NULL,
     scanned_date DATE NOT NULL,
     submission_date DATE DEFAULT CURRENT_DATE,
+    review_requested BOOLEAN DEFAULT false,
     status VARCHAR(50) DEFAULT 'pending',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -394,6 +436,8 @@ CREATE TABLE submissions (
 
   // Pending queue
   const pendingQueue = submissions.filter(s => s.status === 'pending');
+  const reviewRequestCount = pendingQueue.filter(s => s.requiresAdminReview).length;
+  const normalPendingCount = pendingQueue.length - reviewRequestCount;
 
   // Search Results
   const cleanSearchId = searchId.trim().toUpperCase();
@@ -407,32 +451,31 @@ CREATE TABLE submissions (
   const canSubmitForm = hasValidConfirmedKcal && !!imagePreview && !!empIdInput.trim() && !!employees[empIdInput.trim().toUpperCase()];
 
   return (
-    <div className="bg-white text-[#72246C] min-h-screen flex flex-col justify-between">
+    <div className="bg-[#F8F3F8] text-[#72246C] min-h-screen flex flex-col justify-between">
       
       {/* HEADER SECTION */}
-      <header className="bg-white/95 border-b border-[#C69214]/30 py-4 px-6 sticky top-0 z-50 flex flex-wrap justify-between items-center gap-4 shadow-lg shadow-[#72246C]/10 backdrop-blur">
-        <div className="flex items-center gap-4">
-          <div className="rounded-2xl bg-gradient-to-br from-[#72246C]/10 via-white to-[#C69214]/10 border border-[#C69214]/35 shadow-lg shadow-[#72246C]/10 px-4 py-2">
-            <img src="/pea-move.png" alt="PEA Titan Move" className="h-24 md:h-28 w-auto object-contain" />
+      <header className="bg-gradient-to-r from-[#72246C] via-[#8B317F] to-[#C69214] py-4 px-6 sticky top-0 z-50 shadow-xl shadow-[#72246C]/20">
+        <div className="flex flex-wrap justify-between items-center gap-4 max-w-7xl mx-auto">
+          <div className="flex items-center gap-4 min-w-0">
+            <img src="/pea-move.png" alt="PEA Titan Move" className="h-24 md:h-28 w-auto object-contain drop-shadow-xl shrink-0" />
+            <div className="min-w-0">
+              <h1 className="text-xl md:text-2xl font-black text-white m-0 leading-tight">
+                PEA Titan Move ย.ยักษ์ขยับนับแคลฯ
+              </h1>
+              <p className="text-xs md:text-sm text-[#FFE6A2] mt-1 mb-0 font-semibold leading-relaxed">
+                1 ก.ค. ถึง 24 ก.ย. 2569 ขยับวันนี้ เพื่อสุขภาพที่ดีของเรา
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-2xl font-black tracking-tight text-[#72246C] m-0 leading-none">
-              PEA Titan Move
-            </h1>
-            <p className="text-xs text-[#C69214] mt-1 mb-0 font-semibold">
-              ขยับวันนี้ เพื่อสุขภาพที่ดีของเรา
-            </p>
-          </div>
-        </div>
         
-        <div className="flex items-center gap-2">
-          <nav className="flex flex-wrap bg-white p-1.5 rounded-xl border border-[#C69214]/30 gap-1 shadow-sm">
+          <div className="flex items-center gap-2">
+          <nav className="flex flex-wrap bg-white/15 p-1.5 rounded-xl border border-white/25 gap-1 shadow-sm backdrop-blur">
             <button 
               onClick={() => handleTabChange('employee-form')} 
               className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-300 ${
                 activeTab === 'employee-form' 
-                  ? 'bg-gradient-to-r from-[#72246C] to-[#C69214] text-white shadow-md' 
-                  : 'text-[#72246C] hover:bg-[#72246C]/5'
+                  ? 'bg-white text-[#72246C] shadow-md' 
+                  : 'text-white hover:bg-white/15'
               }`}
             >
               <UploadCloud className="h-4 w-4" />
@@ -443,12 +486,12 @@ CREATE TABLE submissions (
               onClick={() => handleTabChange('company-dashboard')} 
               className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-300 ${
                 activeTab === 'company-dashboard' 
-                  ? 'bg-gradient-to-r from-[#72246C] to-[#C69214] text-white shadow-md' 
-                  : 'text-[#72246C] hover:bg-[#72246C]/5'
+                  ? 'bg-white text-[#72246C] shadow-md' 
+                  : 'text-white hover:bg-white/15'
               }`}
             >
               <TrendingUp className="h-4 w-4" />
-              <span>แดชบอร์ดสุขภาพองค์กร</span>
+              <span>แดชบอร์ดสุขภาพ</span>
             </button>
           </nav>
 
@@ -459,12 +502,13 @@ CREATE TABLE submissions (
             onClick={() => handleTabChange('admin-portal')}
             className={`relative w-9 h-9 rounded-full border flex items-center justify-center transition-all ${
               activeTab === 'admin-portal'
-                ? 'border-[#72246C] bg-[#72246C] text-white'
-                : 'border-[#C69214]/30 bg-white text-[#72246C]/55 hover:text-[#72246C] hover:border-[#72246C]/45'
+                ? 'border-white bg-white text-[#72246C]'
+                : 'border-white/35 bg-white/10 text-white/75 hover:text-white hover:bg-white/20'
             }`}
           >
             <Settings className="h-3.5 w-3.5" />
           </button>
+          </div>
         </div>
       </header>
 
@@ -542,36 +586,19 @@ CREATE TABLE submissions (
                     </div>
 
                     <div>
-                      <label className="block text-sm font-semibold text-[#72246C]/80 mb-3">กิจกรรมที่ออกกำลังกาย</label>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
-                        {[
-                          { val: 'วิ่ง', label: 'วิ่ง' },
-                          { val: 'เดิน', label: 'เดิน' },
-                          { val: 'ปั่นจักรยาน', label: 'ปั่นจักรยาน' },
-                          { val: 'ยิม / ฟิตเนส', label: 'ยิม / ฟิตเนส' },
-                          { val: 'ปิงปอง', label: 'ปิงปอง' },
-                          { val: 'แบดมินตัน', label: 'แบดมินตัน' },
-                          { val: 'เทนนิส', label: 'เทนนิส' },
-                          { val: 'กอล์ฟ', label: 'กอล์ฟ' },
-                          { val: 'เปตอง', label: 'เปตอง' },
-                          { val: 'บาสเกตบอล', label: 'บาสเกตบอล' },
-                          { val: 'ฟุตบอล / ฟุตซอล', label: 'ฟุตบอล / ฟุตซอล' },
-                          { val: 'กีฬาอื่น ๆ', label: 'กีฬาอื่น ๆ' }
-                        ].map(act => (
-                          <button
-                            key={act.val}
-                            type="button"
-                            onClick={() => setActivityType(act.val)}
-                            className={`px-3 py-2 rounded-xl flex items-center justify-center text-center gap-1.5 cursor-pointer transition-all border min-h-11 ${
-                              activityType === act.val 
-                                ? 'border-[#72246C]/30 bg-gradient-to-r from-[#72246C] to-[#C69214] text-white shadow-sm' 
-                                : 'border-[#C69214]/25 bg-white text-[#72246C] hover:bg-[#72246C]/5'
-                            }`}
-                          >
-                            <Activity className="h-3.5 w-3.5 shrink-0" />
-                            <span className="text-[11px] font-semibold leading-tight">{act.label}</span>
-                          </button>
-                        ))}
+                      <label className="block text-sm font-semibold text-[#72246C]/80 mb-2">กิจกรรมที่ออกกำลังกาย</label>
+                      <div className="relative">
+                        <Activity className="absolute left-3.5 top-1/2 -translate-y-1/2 h-5 w-5 text-[#C69214] pointer-events-none" />
+                        <select
+                          value={activityType}
+                          onChange={(e) => setActivityType(e.target.value)}
+                          className="w-full appearance-none bg-white border border-[#C69214]/25 focus:border-[#C69214] focus:ring-2 focus:ring-[#C69214]/15 rounded-xl py-3 pl-11 pr-10 text-[#72246C] font-semibold transition-all focus:outline-none"
+                        >
+                          {ACTIVITY_OPTIONS.map(activity => (
+                            <option key={activity} value={activity}>{activity}</option>
+                          ))}
+                        </select>
+                        <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#72246C]/45 pointer-events-none">▾</span>
                       </div>
                     </div>
 
@@ -656,6 +683,27 @@ CREATE TABLE submissions (
                             </div>
                           </div>
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => setRequiresAdminReview(prev => !prev)}
+                          className={`w-full rounded-xl border px-4 py-3 text-left transition-all flex items-start gap-3 ${
+                            requiresAdminReview
+                              ? 'border-[#C69214] bg-[#FFF7E2] text-[#72246C]'
+                              : 'border-[#72246C]/15 bg-[#F8F3F8] text-[#72246C]/75 hover:border-[#C69214]/45'
+                          }`}
+                        >
+                          <span className={`mt-0.5 h-5 w-5 rounded-full border flex items-center justify-center shrink-0 ${
+                            requiresAdminReview ? 'border-[#C69214] bg-[#C69214] text-white' : 'border-[#72246C]/25 bg-white'
+                          }`}>
+                            {requiresAdminReview && <Check className="h-3.5 w-3.5 stroke-[3]" />}
+                          </span>
+                          <span>
+                            <span className="block text-sm font-bold">ให้ผู้ดูแลตรวจสอบและแก้ไขค่า kcal ก่อนอนุมัติ</span>
+                            <span className="block text-xs mt-1 opacity-75">
+                              ใช้เมื่อไม่แน่ใจว่าตัวเลขที่กรอกตรงกับภาพหรือไม่ รายการนี้จะมีแจ้งเตือนในหลังบ้านให้แอดมินตรวจเลขก่อนกดอนุมัติ
+                            </span>
+                          </span>
+                        </button>
                       </div>
                     )}
 
@@ -692,7 +740,7 @@ CREATE TABLE submissions (
                           <Crown className="h-3.5 w-3.5" />
                           แชมป์แคลอรี่สะสมสูงสุดสัปดาห์นี้
                         </span>
-                        <h3 className="text-2xl font-extrabold text-[#72246C] mt-4 tracking-tight">
+                        <h3 className="text-2xl font-extrabold text-[#72246C] mt-4">
                           {topPerformer ? topPerformer.name : 'กำลังรอผลอนุมัติ'}
                         </h3>
                         <p className="text-xs text-[#72246C]/65 mt-1">
@@ -926,6 +974,12 @@ CREATE TABLE submissions (
                     <p className="text-xs text-[#72246C]/65 mt-1 mb-0">
                       ตรวจสอบความถูกต้องสอดคล้องของหลักฐานภาพนาฬิกา และตัดสินใจบันทึกคะแนนเข้าสู่ระบบส่วนกลาง
                     </p>
+                    {reviewRequestCount > 0 && (
+                      <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-[#FFF0C2] border border-[#C69214]/35 px-3 py-1.5 text-xs font-bold text-[#72246C]">
+                        <AlertCircle className="h-3.5 w-3.5 text-[#C69214]" />
+                        มี {reviewRequestCount} รายการที่ผู้ใช้ขอให้ตรวจสอบค่า kcal
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <button 
@@ -933,7 +987,7 @@ CREATE TABLE submissions (
                       className="px-4 py-2.5 bg-[#C69214] hover:bg-[#B58112] text-[#2A0D27] font-bold text-xs rounded-xl shadow-lg shadow-[#C69214]/10 transition-colors flex items-center gap-1.5"
                     >
                       <Check className="h-4 w-4 stroke-[3]" />
-                      <span>อนุมัติทั้งหมดในคิว ({pendingQueue.length})</span>
+                      <span>อนุมัติรายการทั่วไป ({normalPendingCount})</span>
                     </button>
                     <button
                       type="button"
@@ -971,9 +1025,17 @@ CREATE TABLE submissions (
                         </tr>
                       ) : (
                         pendingQueue.map(sub => (
-                          <tr key={sub.id} className="hover:bg-[#72246C]/5 transition-colors">
+                          <tr key={sub.id} className={`transition-colors ${sub.requiresAdminReview ? 'bg-[#FFF7E2]/70 hover:bg-[#FFF0C2]/80' : 'hover:bg-[#72246C]/5'}`}>
                             <td className="py-4 px-4">
-                              <div className="font-bold text-[#72246C]">{sub.name}</div>
+                              <div className="font-bold text-[#72246C] flex items-center gap-2">
+                                {sub.name}
+                                {sub.requiresAdminReview && (
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-[#C69214] px-2 py-0.5 text-[10px] font-black text-white">
+                                    <AlertCircle className="h-3 w-3" />
+                                    ตรวจเลข
+                                  </span>
+                                )}
+                              </div>
                               <div className="text-xs text-[#72246C]/65 font-mono">
                                 {sub.empId} • {sub.department} ({sub.division})
                               </div>
@@ -994,8 +1056,22 @@ CREATE TABLE submissions (
                                 <img src={sub.imageUrl} className="w-full h-full object-contain" alt="Verification proof" />
                               </a>
                             </td>
-                            <td className="py-4 px-4 font-mono font-bold text-[#C69214] text-lg">
-                              {sub.kcal}
+                            <td className="py-4 px-4">
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="5000"
+                                  value={adminKcalEdits[sub.id] ?? String(sub.kcal)}
+                                  onChange={(e) => setAdminKcalEdits(prev => ({ ...prev, [sub.id]: e.target.value }))}
+                                  className="w-24 rounded-lg border border-[#C69214]/25 bg-white px-2 py-1.5 text-lg font-bold font-mono text-[#C69214] focus:outline-none focus:border-[#C69214]"
+                                  aria-label={`แก้ไข kcal ของ ${sub.name}`}
+                                />
+                                <span className="text-xs text-[#72246C]/45">kcal</span>
+                              </div>
+                              {sub.requiresAdminReview && (
+                                <p className="mt-1 text-[10px] font-semibold text-[#C69214]">ผู้ใช้ขอให้ตรวจสอบเลขนี้</p>
+                              )}
                             </td>
                             <td className="py-4 px-4 font-mono text-xs text-[#72246C]/65">
                               <div className="truncate max-w-[120px]" title={sub.imageHash}>
@@ -1009,7 +1085,7 @@ CREATE TABLE submissions (
                             <td className="py-4 px-4">
                               <div className="flex justify-center gap-2">
                                 <button 
-                                  onClick={() => handleApprove(sub.id)}
+                                  onClick={() => handleApprove(sub)}
                                   className="px-3 py-1.5 bg-[#C69214] hover:bg-[#B58112] text-[#2A0D27] font-bold text-xs rounded-lg transition-colors flex items-center gap-1"
                                 >
                                   <Check className="h-3.5 w-3.5 stroke-[3]" /> อนุมัติ
@@ -1142,6 +1218,7 @@ CREATE TABLE submissions (
                         &nbsp;&nbsp;&nbsp;&nbsp;image_url <span className="text-[#72246C]">TEXT NOT NULL</span>,<br />
                         &nbsp;&nbsp;&nbsp;&nbsp;image_hash <span className="text-[#72246C]">VARCHAR(64) NOT NULL</span>,<br />
                         &nbsp;&nbsp;&nbsp;&nbsp;scanned_date <span className="text-[#72246C]">DATE NOT NULL</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;review_requested <span className="text-[#72246C]">BOOLEAN DEFAULT false</span>,<br />
                         &nbsp;&nbsp;&nbsp;&nbsp;status <span className="text-[#72246C]">VARCHAR(50) DEFAULT 'pending'</span>,<br />
                         &nbsp;&nbsp;&nbsp;&nbsp;created_at <span className="text-[#72246C]">TIMESTAMP WITH TIME ZONE DEFAULT NOW()</span><br />
                         );

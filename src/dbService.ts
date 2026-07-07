@@ -46,6 +46,7 @@ export interface Submission {
   status: 'pending' | 'approved' | 'rejected';
   timestamp: string;
   imageHash?: string;
+  requiresAdminReview?: boolean;
 }
 
 // Helpers for LocalStorage Mock DB
@@ -108,7 +109,8 @@ export const dbService = {
           imageUrl: row.image_url,
           scannedDate: row.scanned_date || row.submission_date,
           status: row.status,
-          timestamp: new Date(row.created_at || row.submission_date).toISOString().replace('T', ' ').substring(0, 16)
+          timestamp: new Date(row.created_at || row.submission_date).toISOString().replace('T', ' ').substring(0, 16),
+          requiresAdminReview: row.review_requested ?? row.requires_admin_review ?? false
         })) || [];
       } catch (err) {
         console.error('Supabase getSubmissions error, falling back to local:', err);
@@ -147,7 +149,8 @@ export const dbService = {
             image_url: imageUrl,
             image_hash: sub.imageHash || 'none',
             scanned_date: sub.scannedDate,
-            status: sub.status
+            status: sub.status,
+            review_requested: sub.requiresAdminReview || false
           }
         ]).select().single();
 
@@ -164,7 +167,8 @@ export const dbService = {
           imageUrl: data.image_url,
           scannedDate: data.scanned_date,
           status: data.status,
-          timestamp: new Date(data.created_at).toISOString().replace('T', ' ').substring(0, 16)
+          timestamp: new Date(data.created_at).toISOString().replace('T', ' ').substring(0, 16),
+          requiresAdminReview: data.review_requested ?? sub.requiresAdminReview ?? false
         };
       } catch (err) {
         console.error('Supabase createSubmission error, falling back to local:', err);
@@ -197,6 +201,31 @@ export const dbService = {
     const idx = local.findIndex(s => s.id === id);
     if (idx !== -1) {
       local[idx].status = status;
+      saveLocalSubmissions(local);
+      return true;
+    }
+    return false;
+  },
+
+  async updateKcal(id: number, kcal: number, requiresAdminReview = false): Promise<boolean> {
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('submissions')
+          .update({ kcal, review_requested: requiresAdminReview })
+          .eq('id', id);
+        if (error) throw error;
+        return true;
+      } catch (err) {
+        console.error('Supabase updateKcal error, falling back to local:', err);
+      }
+    }
+
+    const local = getLocalSubmissions();
+    const idx = local.findIndex(s => s.id === id);
+    if (idx !== -1) {
+      local[idx].kcal = kcal;
+      local[idx].requiresAdminReview = requiresAdminReview;
       saveLocalSubmissions(local);
       return true;
     }
