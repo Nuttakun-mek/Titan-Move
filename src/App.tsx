@@ -50,13 +50,136 @@ const ACTIVITY_OPTIONS = [
 type CalorieScanResult = {
   value: number | null;
   confidence: 'high' | 'low' | 'none';
+  text?: string;
 };
+
+type DateScanResult = {
+  matchedToday: boolean;
+  foundDateText: string | null;
+  confidence: 'high' | 'none';
+};
+
+const EMPLOYEE_IMPORT_HEADERS = [
+  'รหัสพนักงาน',
+  'คำนำหน้า',
+  'ชื่อ',
+  'นามสกุล',
+  'ตำแหน่ง',
+  'สายงาน',
+  'สำนัก',
+  'ฝ่าย',
+  'กอง',
+  'แผนก'
+];
+
+const splitDelimitedRow = (line: string, delimiter: string) => {
+  const values: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const nextChar = line[index + 1];
+
+    if (char === '"' && nextChar === '"') {
+      current += '"';
+      index += 1;
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (char === delimiter && !inQuotes) {
+      values.push(current.trim());
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  values.push(current.trim());
+  return values;
+};
+
+const parseEmployeeRoster = (text: string): Employee[] => {
+  const lines = text
+    .replace(/^\uFEFF/, '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) {
+    throw new Error('ไฟล์ต้องมีหัวตารางและข้อมูลพนักงานอย่างน้อย 1 แถว');
+  }
+
+  const delimiter = lines[0].includes('\t') ? '\t' : ',';
+  const headers = splitDelimitedRow(lines[0], delimiter);
+  const headerIndex = new Map(headers.map((header, index) => [header.trim(), index]));
+  const missingHeaders = EMPLOYEE_IMPORT_HEADERS.filter(header => !headerIndex.has(header));
+
+  if (missingHeaders.length > 0) {
+    throw new Error(`หัวตารางไม่ครบ: ${missingHeaders.join(', ')}`);
+  }
+
+  return lines.slice(1).map((line) => {
+    const values = splitDelimitedRow(line, delimiter);
+    const getValue = (header: string) => values[headerIndex.get(header) ?? -1]?.trim() ?? '';
+    const empId = getValue('รหัสพนักงาน').toUpperCase();
+    const prefix = getValue('คำนำหน้า');
+    const firstName = getValue('ชื่อ');
+    const lastName = getValue('นามสกุล');
+
+    return {
+      empId,
+      prefix,
+      firstName,
+      lastName,
+      name: `${prefix}${firstName} ${lastName}`.trim(),
+      position: getValue('ตำแหน่ง'),
+      workline: getValue('สายงาน'),
+      office: getValue('สำนัก'),
+      department: getValue('ฝ่าย'),
+      division: getValue('กอง'),
+      section: getValue('แผนก')
+    };
+  }).filter(employee => employee.empId);
+};
+
+const parseEmployeeWorkbook = async (file: File): Promise<Employee[]> => {
+  const { readSheet } = await import('read-excel-file/browser');
+  const rows = await readSheet(file);
+  const text = rows
+    .map(row => row.map(value => String(value ?? '').trim()).join('\t'))
+    .filter(row => row.trim())
+    .join('\n');
+
+  return parseEmployeeRoster(text);
+};
+
+const getEmployeeOrgLabel = (employee: Employee) => [
+  employee.workline && `สายงาน: ${employee.workline}`,
+  employee.office && `สำนัก: ${employee.office}`,
+  employee.department && `ฝ่าย: ${employee.department}`,
+  employee.division && `กอง: ${employee.division}`,
+  employee.section && `แผนก: ${employee.section}`
+].filter(Boolean).join(' • ');
+
+const ADMIN_RECORD_PAGE_SIZE = 25;
+const isTemporaryBlobUrl = (url: string) => url.startsWith('blob:');
 
 const CALORIE_CROP_REGIONS = [
   { x: 0.44, y: 0.42, width: 0.52, height: 0.20 },
   { x: 0.46, y: 0.48, width: 0.36, height: 0.12 },
-  { x: 0.35, y: 0.36, width: 0.60, height: 0.30 }
+  { x: 0.35, y: 0.36, width: 0.60, height: 0.30 },
+  { x: 0.34, y: 0.56, width: 0.56, height: 0.18 },
+  { x: 0.25, y: 0.50, width: 0.70, height: 0.28 },
+  { x: 0.16, y: 0.18, width: 0.68, height: 0.55 }
 ];
+const CALORIE_LABEL_PATTERN = /kcal|calories?|calorie|cal\b|แคล(?:อรี่|อรี)?|กิโล\s*แคล(?:อรี่|อรี)?|กิโลแคล(?:อรี่|อรี)?|พลังงาน/i;
 
 function parseCaloriesFromText(text: string): number | null {
   const normalized = text
@@ -65,8 +188,8 @@ function parseCaloriesFromText(text: string): number | null {
     .replace(/\s+/g, ' ')
     .trim();
   const labeledPatterns = [
-    /(\d{2,5})\s*(?:kcal|calories?|calorie|cal\b|แคล|พลังงาน)/i,
-    /(?:kcal|calories?|calorie|cal\b|แคล|พลังงาน)\s*(\d{2,5})/i,
+    new RegExp(`(\\d{2,5})\\s*(?:${CALORIE_LABEL_PATTERN.source})`, 'i'),
+    new RegExp(`(?:${CALORIE_LABEL_PATTERN.source})\\s*(\\d{2,5})`, 'i'),
   ];
 
   for (const pattern of labeledPatterns) {
@@ -78,7 +201,7 @@ function parseCaloriesFromText(text: string): number | null {
 
   const lines = text.split(/\r?\n/);
   for (let index = 0; index < lines.length; index += 1) {
-    if (!/(kcal|calories?|calorie|cal\b|แคล|พลังงาน)/i.test(lines[index])) continue;
+    if (!CALORIE_LABEL_PATTERN.test(lines[index])) continue;
     const windowText = [lines[index - 1] ?? '', lines[index], lines[index + 1] ?? ''].join(' ');
     const values = Array.from(windowText.matchAll(/\d[\d,.]*/g))
       .map(match => Number(match[0].replace(/[,.]/g, '')))
@@ -95,12 +218,78 @@ function correctCommonCalorieMisread(value: number, text: string): number {
     value === 2809 &&
     /steps/.test(context) &&
     /distance/.test(context) &&
-    /calories|kcal|cal\b/.test(context) &&
+    CALORIE_LABEL_PATTERN.test(context) &&
     /13[.,]?\s*8\s*km|13\.8\s*km/.test(context)
   ) {
     return 2869;
   }
   return value;
+}
+
+function getTodayParts() {
+  const today = new Date();
+  return {
+    day: today.getDate(),
+    month: today.getMonth() + 1,
+    year: today.getFullYear()
+  };
+}
+
+function scanDateFromText(text: string): DateScanResult {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  const { day, month, year } = getTodayParts();
+  const monthNames = [
+    ['jan', 'january'],
+    ['feb', 'february'],
+    ['mar', 'march'],
+    ['apr', 'april'],
+    ['may'],
+    ['jun', 'june'],
+    ['jul', 'july'],
+    ['aug', 'august'],
+    ['sep', 'sept', 'september'],
+    ['oct', 'october'],
+    ['nov', 'november'],
+    ['dec', 'december']
+  ];
+  const thaiMonthNames = [
+    ['ม.ค', 'มกราคม'],
+    ['ก.พ', 'กุมภาพันธ์'],
+    ['มี.ค', 'มีนาคม'],
+    ['เม.ย', 'เมษายน'],
+    ['พ.ค', 'พฤษภาคม'],
+    ['มิ.ย', 'มิถุนายน'],
+    ['ก.ค', 'กรกฎาคม'],
+    ['ส.ค', 'สิงหาคม'],
+    ['ก.ย', 'กันยายน'],
+    ['ต.ค', 'ตุลาคม'],
+    ['พ.ย', 'พฤศจิกายน'],
+    ['ธ.ค', 'ธันวาคม']
+  ];
+  const currentMonthNames = monthNames[month - 1].join('|');
+  const currentThaiMonthNames = thaiMonthNames[month - 1]
+    .map(name => name.replace('.', '\\.?'))
+    .join('|');
+  const englishDatePattern = new RegExp(`(?:${currentMonthNames})\\.?\\s+0?${day}(?:\\b|,)`, 'i');
+  const englishDateReversePattern = new RegExp(`\\b0?${day}\\s+(?:${currentMonthNames})\\.?\\b`, 'i');
+  const thaiDatePattern = new RegExp(`\\b0?${day}\\s*(?:${currentThaiMonthNames})\\.?\\b`, 'i');
+  const numericDatePatterns = [
+    new RegExp(`\\b0?${day}[/-]0?${month}(?:[/-](?:${year}|${String(year).slice(-2)}|${year + 543}|${String(year + 543).slice(-2)}))?\\b`),
+    new RegExp(`\\b0?${month}[/-]0?${day}(?:[/-](?:${year}|${String(year).slice(-2)}))?\\b`)
+  ];
+
+  const matchedPattern = [englishDatePattern, englishDateReversePattern, thaiDatePattern, ...numericDatePatterns]
+    .find(pattern => pattern.test(normalized));
+  if (matchedPattern) {
+    return { matchedToday: true, foundDateText: normalized.match(matchedPattern)?.[0] || null, confidence: 'high' };
+  }
+
+  const foundAnyDate = normalized.match(/\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b|\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\b|\b\d{1,2}\s*(?:ม\.?ค|ก\.?พ|มี\.?ค|เม\.?ย|พ\.?ค|มิ\.?ย|ก\.?ค|ส\.?ค|ก\.?ย|ต\.?ค|พ\.?ย|ธ\.?ค|มกราคม|กุมภาพันธ์|มีนาคม|เมษายน|พฤษภาคม|มิถุนายน|กรกฎาคม|สิงหาคม|กันยายน|ตุลาคม|พฤศจิกายน|ธันวาคม)\.?\b|\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b/i);
+  return {
+    matchedToday: false,
+    foundDateText: foundAnyDate?.[0] || null,
+    confidence: 'none'
+  };
 }
 
 async function createCalorieCrop(file: File, region: { x: number; y: number; width: number; height: number }): Promise<Blob> {
@@ -112,7 +301,7 @@ async function createCalorieCrop(file: File, region: { x: number; y: number; wid
       const cropY = Math.floor(image.naturalHeight * region.y);
       const cropW = Math.floor(image.naturalWidth * region.width);
       const cropH = Math.floor(image.naturalHeight * region.height);
-      const scale = 5;
+      const scale = 7;
       const canvas = document.createElement('canvas');
       canvas.width = cropW * scale;
       canvas.height = cropH * scale;
@@ -124,6 +313,7 @@ async function createCalorieCrop(file: File, region: { x: number; y: number; wid
       }
 
       context.imageSmoothingEnabled = false;
+      context.filter = 'grayscale(1) contrast(1.45)';
       context.drawImage(image, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height);
       URL.revokeObjectURL(url);
       canvas.toBlob(blob => {
@@ -140,13 +330,14 @@ async function createCalorieCrop(file: File, region: { x: number; y: number; wid
 }
 
 async function scanCaloriesFromImage(file: File): Promise<CalorieScanResult> {
-  const fullResult = await Tesseract.recognize(file, 'eng');
+  const fullResult = await Tesseract.recognize(file, 'eng+tha');
   const fullText = fullResult.data.text || '';
   const fullValue = parseCaloriesFromText(fullText);
   if (fullValue !== null) {
-    return { value: correctCommonCalorieMisread(fullValue, fullText), confidence: 'high' };
+    return { value: correctCommonCalorieMisread(fullValue, fullText), confidence: 'high', text: fullText };
   }
 
+  const cropTexts: string[] = [];
   for (const region of CALORIE_CROP_REGIONS) {
     try {
       const crop = await createCalorieCrop(file, region);
@@ -155,16 +346,27 @@ async function scanCaloriesFromImage(file: File): Promise<CalorieScanResult> {
         tessedit_pageseg_mode: '6',
       } as never);
       const cropText = cropResult.data.text || '';
+      cropTexts.push(cropText);
       const cropValue = parseCaloriesFromText(cropText);
       if (cropValue !== null) {
-        return { value: correctCommonCalorieMisread(cropValue, `${fullText}\n${cropText}`), confidence: 'low' };
+        return { value: correctCommonCalorieMisread(cropValue, `${fullText}\n${cropText}`), confidence: 'low', text: `${fullText}\n${cropText}` };
+      }
+
+      const thaiCropResult = await Tesseract.recognize(crop, 'eng+tha', {
+        tessedit_pageseg_mode: '6',
+      } as never);
+      const thaiCropText = thaiCropResult.data.text || '';
+      cropTexts.push(thaiCropText);
+      const thaiCropValue = parseCaloriesFromText(thaiCropText);
+      if (thaiCropValue !== null) {
+        return { value: correctCommonCalorieMisread(thaiCropValue, `${fullText}\n${cropText}\n${thaiCropText}`), confidence: 'low', text: `${fullText}\n${cropText}\n${thaiCropText}` };
       }
     } catch (error) {
       console.warn('Calorie crop scan failed:', error);
     }
   }
 
-  return { value: null, confidence: 'none' };
+  return { value: null, confidence: 'none', text: `${fullText}\n${cropTexts.join('\n')}` };
 }
 
 export default function App() {
@@ -179,6 +381,7 @@ export default function App() {
   const [imageLoading, setImageLoading] = useState(false);
   const [confirmedKcal, setConfirmedKcal] = useState('');
   const [detectedKcal, setDetectedKcal] = useState<CalorieScanResult | null>(null);
+  const [dateScan, setDateScan] = useState<DateScanResult | null>(null);
   const [imageHash, setImageHash] = useState('');
   const [requiresAdminReview, setRequiresAdminReview] = useState(false);
 
@@ -193,6 +396,12 @@ export default function App() {
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [adminLoginError, setAdminLoginError] = useState('');
   const [adminKcalEdits, setAdminKcalEdits] = useState<Record<number, string>>({});
+  const [adminStatusEdits, setAdminStatusEdits] = useState<Record<number, Submission['status']>>({});
+  const [employeeUploadLoading, setEmployeeUploadLoading] = useState(false);
+  const [adminRecordQuery, setAdminRecordQuery] = useState('');
+  const [adminRecordDate, setAdminRecordDate] = useState('');
+  const [adminRecordFilter, setAdminRecordFilter] = useState<'needs_action' | 'all' | 'approved' | 'pending' | 'rejected' | 'unacknowledged' | 'review_requested'>('needs_action');
+  const [adminRecordPage, setAdminRecordPage] = useState(1);
 
   useEffect(() => {
     async function loadData() {
@@ -247,6 +456,51 @@ export default function App() {
     showToast('ออกจากหลังบ้านแล้ว', 'กลับสู่หน้าผู้ใช้งานทั่วไป', 'success');
   };
 
+  const handleEmployeeRosterUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setEmployeeUploadLoading(true);
+    try {
+      const isWorkbook = /\.(xlsx|xls)$/i.test(file.name);
+      const importedEmployees = isWorkbook
+        ? await parseEmployeeWorkbook(file)
+        : parseEmployeeRoster(await file.text());
+
+      if (importedEmployees.length === 0) {
+        showToast('ไม่พบข้อมูลพนักงาน', 'กรุณาตรวจสอบว่ามีข้อมูลหลังหัวตารางครบถ้วน', 'error');
+        return;
+      }
+
+      const importResult = await dbService.upsertEmployees(importedEmployees);
+      const latestEmployees = await dbService.getEmployees();
+      setEmployees(latestEmployees);
+      showToast(
+        importResult.target === 'supabase' ? 'อัปโหลดรายชื่อเข้า Database สำเร็จ' : 'บันทึกรายชื่อในเครื่องเท่านั้น',
+        importResult.target === 'supabase'
+          ? `นำเข้าหรืออัปเดตข้อมูลพนักงาน ${importResult.count.toLocaleString()} รายการใน Supabase แล้ว`
+          : `นำเข้าข้อมูล ${importResult.count.toLocaleString()} รายการใน LocalStorage เพราะยังไม่ได้ตั้งค่า Supabase`,
+        importResult.target === 'supabase' ? 'success' : 'error'
+      );
+    } catch (err) {
+      console.error(err);
+      showToast('อัปโหลดรายชื่อไม่สำเร็จ', err instanceof Error ? err.message : 'กรุณาตรวจสอบรูปแบบไฟล์ CSV/TSV/XLSX', 'error');
+    } finally {
+      setEmployeeUploadLoading(false);
+    }
+  };
+
+  const readFileAsDataUrl = (file: File): Promise<string> => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') resolve(reader.result);
+      else reject(new Error('ไม่สามารถอ่านไฟล์รูปภาพได้'));
+    };
+    reader.onerror = () => reject(new Error('ไม่สามารถอ่านไฟล์รูปภาพได้'));
+    reader.readAsDataURL(file);
+  });
+
   // Hashing Image logic for anti-cheat
   const calculateHash = async (file: File): Promise<string> => {
     const arrayBuffer = await file.arrayBuffer();
@@ -260,12 +514,15 @@ export default function App() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setImagePreview(URL.createObjectURL(file));
     setImageLoading(true);
     setConfirmedKcal('');
     setDetectedKcal(null);
+    setDateScan(null);
+    setRequiresAdminReview(false);
 
     try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setImagePreview(dataUrl);
       const hash = await calculateHash(file);
       setImageHash(hash);
 
@@ -279,12 +536,19 @@ export default function App() {
 
       const calorieScan = await scanCaloriesFromImage(file);
       setDetectedKcal(calorieScan);
+      const scannedDate = scanDateFromText(`${calorieScan.text || ''} ${file.name}`);
+      setDateScan(scannedDate);
+      if (!scannedDate.matchedToday) {
+        setRequiresAdminReview(true);
+      }
       if (calorieScan.value !== null) {
         setConfirmedKcal(String(calorieScan.value));
         showToast(
           'ตรวจพบค่า kcal จากภาพ',
-          `ระบบเสนอค่า ${calorieScan.value.toLocaleString()} kcal หากไม่ตรงให้แจ้งผู้ดูแลตรวจสอบ`,
-          'success'
+          scannedDate.matchedToday
+            ? `ระบบเสนอค่า ${calorieScan.value.toLocaleString()} kcal และตรวจพบวันที่ปัจจุบัน`
+            : `ระบบเสนอค่า ${calorieScan.value.toLocaleString()} kcal แต่วันที่ในภาพยังไม่ตรง/ไม่ชัดเจน จึงส่งให้ผู้ดูแลตรวจ`,
+          scannedDate.matchedToday ? 'success' : 'error'
         );
       } else {
         setRequiresAdminReview(true);
@@ -304,6 +568,7 @@ export default function App() {
     setImagePreview(null);
     setConfirmedKcal('');
     setDetectedKcal(null);
+    setDateScan(null);
     setImageHash('');
     setRequiresAdminReview(false);
   };
@@ -316,7 +581,7 @@ export default function App() {
     // 1. Check if employee is registered
     const employee = employees[cleanId];
     if (!employee) {
-      showToast('ไม่พบรหัสพนักงาน', 'กรุณากรอกรหัส EMP1001 ถึง EMP1005 ในแบบจำลอง', 'error');
+      showToast('ไม่พบรหัสพนักงาน', 'กรุณาตรวจสอบรหัส หรือแจ้งผู้ดูแลให้อัปโหลดรายชื่อพนักงานในหลังบ้าน', 'error');
       return;
     }
 
@@ -332,6 +597,7 @@ export default function App() {
 
     const confirmedKcalValue = Number(confirmedKcal);
     const hasDetectedKcal = Number.isFinite(confirmedKcalValue) && confirmedKcalValue >= 1 && confirmedKcalValue <= 5000;
+    const dateRequiresReview = !dateScan?.matchedToday;
     if (!hasDetectedKcal && !requiresAdminReview) {
       showToast('ยังไม่มีค่า kcal ที่ตรวจพบ', 'กรุณาอัปโหลดภาพใหม่ หรือส่งให้ผู้ดูแลตรวจค่า kcal ในหลังบ้าน', 'error');
       return;
@@ -354,10 +620,11 @@ export default function App() {
       kcal: hasDetectedKcal ? Math.round(confirmedKcalValue) : 0,
       imageUrl: imagePreview || DEFAULT_PREVIEW,
       scannedDate: todayStr,
-      status: 'pending' as const,
+      status: (requiresAdminReview || dateRequiresReview) ? 'pending' as const : 'approved' as const,
       timestamp: new Date().toISOString().replace('T', ' ').substring(0, 16),
       imageHash: imageHash || 'local-' + Math.random().toString(36).substr(2, 9),
-      requiresAdminReview
+      requiresAdminReview: requiresAdminReview || dateRequiresReview,
+      adminAcknowledged: false
     };
 
     try {
@@ -378,9 +645,9 @@ export default function App() {
 
       showToast(
         'ส่งผลงานสำเร็จ!',
-        requiresAdminReview
-          ? 'ส่งคำขอให้ผู้ดูแลตรวจสอบค่า kcal แล้ว รายการจะขึ้นแจ้งเตือนในหลังบ้าน'
-          : 'ข้อมูลบันทึกแคลอรี่รอผู้ดูแลระบบอนุมัติขึ้นกระดานคะแนน',
+        requiresAdminReview || dateRequiresReview
+          ? 'ส่งคำขอให้ผู้ดูแลตรวจสอบค่า kcal/วันที่แล้ว รายการจะขึ้นแจ้งเตือนในหลังบ้าน'
+          : 'ระบบอนุมัติและบันทึกคะแนนทันทีแล้ว รายการจะยังแสดงในหลังบ้านเพื่อให้ผู้ดูแลทวนสอบ',
         'success'
       );
     } catch (err) {
@@ -406,7 +673,8 @@ export default function App() {
 
       const success = await dbService.updateStatus(submission.id, 'approved');
       if (success) {
-        setSubmissions(prev => prev.map(s => s.id === submission.id ? { ...s, status: 'approved', kcal: roundedKcal, requiresAdminReview: false } : s));
+        await dbService.updateSubmission(submission.id, { adminAcknowledged: true, requiresAdminReview: false });
+        setSubmissions(prev => prev.map(s => s.id === submission.id ? { ...s, status: 'approved', kcal: roundedKcal, requiresAdminReview: false, adminAcknowledged: true } : s));
         setAdminKcalEdits(prev => {
           const next = { ...prev };
           delete next[submission.id];
@@ -431,12 +699,65 @@ export default function App() {
     try {
       const success = await dbService.updateStatus(id, 'rejected');
       if (success) {
-        setSubmissions(prev => prev.map(s => s.id === id ? { ...s, status: 'rejected' } : s));
+        await dbService.updateSubmission(id, { adminAcknowledged: true, requiresAdminReview: false });
+        setSubmissions(prev => prev.map(s => s.id === id ? { ...s, status: 'rejected', adminAcknowledged: true, requiresAdminReview: false } : s));
         showToast('ปฏิเสธรายการแล้ว', 'ปฏิเสธคำขอการเผาผลาญเรียบร้อยแล้ว', 'error');
       }
     } catch (err) {
       console.error(err);
       showToast('ปฏิเสธรายการไม่สำเร็จ', 'ขัดข้องในระบบฐานข้อมูล', 'error');
+    }
+  };
+
+  const handleSaveSubmissionRecord = async (submission: Submission) => {
+    const editedKcal = Number(adminKcalEdits[submission.id] ?? submission.kcal);
+    if (!Number.isFinite(editedKcal) || editedKcal < 0 || editedKcal > 5000) {
+      showToast('กรุณาตรวจค่า kcal', 'ค่า kcal ต้องเป็นตัวเลข 0-5000', 'error');
+      return;
+    }
+
+    const roundedKcal = Math.round(editedKcal);
+    const editedStatus = adminStatusEdits[submission.id] ?? submission.status;
+    try {
+      const success = await dbService.updateSubmission(submission.id, {
+        kcal: roundedKcal,
+        status: editedStatus,
+        adminAcknowledged: false,
+        requiresAdminReview: false
+      });
+      if (success) {
+        setSubmissions(prev => prev.map(s => s.id === submission.id ? { ...s, kcal: roundedKcal, status: editedStatus, adminAcknowledged: false, requiresAdminReview: false } : s));
+        setAdminKcalEdits(prev => {
+          const next = { ...prev };
+          delete next[submission.id];
+          return next;
+        });
+        setAdminStatusEdits(prev => {
+          const next = { ...prev };
+          delete next[submission.id];
+          return next;
+        });
+        showToast('บันทึกการแก้ไขแล้ว', 'ปรับข้อมูลในฐานข้อมูลเรียบร้อย และยังรอผู้ดูแลกดรับทราบ', 'success');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('บันทึกการแก้ไขไม่สำเร็จ', 'กรุณาลองใหม่อีกครั้ง', 'error');
+    }
+  };
+
+  const handleAcknowledgeSubmission = async (submission: Submission) => {
+    try {
+      const success = await dbService.updateSubmission(submission.id, {
+        adminAcknowledged: true,
+        requiresAdminReview: false
+      });
+      if (success) {
+        setSubmissions(prev => prev.map(s => s.id === submission.id ? { ...s, adminAcknowledged: true, requiresAdminReview: false } : s));
+        showToast('รับทราบรายการแล้ว', 'จบกระบวนการทวนสอบรายการนี้แล้ว', 'success');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('รับทราบรายการไม่สำเร็จ', 'กรุณาลองใหม่อีกครั้ง', 'error');
     }
   };
 
@@ -487,9 +808,16 @@ export default function App() {
 \`\`\`sql
 CREATE TABLE employees (
     emp_id VARCHAR(50) PRIMARY KEY,
+    prefix VARCHAR(50),
+    first_name VARCHAR(255) NOT NULL,
+    last_name VARCHAR(255) NOT NULL,
     name VARCHAR(255) NOT NULL,
-    department VARCHAR(255) NOT NULL,
-    division VARCHAR(255) NOT NULL,
+    position VARCHAR(255),
+    workline VARCHAR(255),
+    office VARCHAR(255),
+    department VARCHAR(255),
+    division VARCHAR(255),
+    section VARCHAR(255),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 \`\`\`
@@ -506,6 +834,7 @@ CREATE TABLE submissions (
     scanned_date DATE NOT NULL,
     submission_date DATE DEFAULT CURRENT_DATE,
     review_requested BOOLEAN DEFAULT false,
+    admin_acknowledged BOOLEAN DEFAULT false,
     status VARCHAR(50) DEFAULT 'pending',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -541,17 +870,27 @@ CREATE TABLE submissions (
   approvedSubmissions.forEach(s => {
     userTotals[s.empId] = (userTotals[s.empId] || 0) + s.kcal;
   });
-  
-  let topEmpId = '';
-  let topKcal = 0;
-  Object.keys(userTotals).forEach(id => {
-    if (userTotals[id] > topKcal) {
-      topKcal = userTotals[id];
-      topEmpId = id;
+
+  const allTimeLeaders = Object.keys(userTotals)
+    .map(empId => ({ empId, employee: employees[empId], kcal: userTotals[empId] }))
+    .sort((a, b) => b.kcal - a.kcal)
+    .slice(0, 3);
+
+  const now = new Date();
+  const weekStart = new Date(now);
+  weekStart.setHours(0, 0, 0, 0);
+  weekStart.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  const weeklyTotals: Record<string, number> = {};
+  approvedSubmissions.forEach(s => {
+    const submittedDate = new Date(`${s.scannedDate}T00:00:00`);
+    if (submittedDate >= weekStart) {
+      weeklyTotals[s.empId] = (weeklyTotals[s.empId] || 0) + s.kcal;
     }
   });
 
-  const topPerformer = topEmpId ? employees[topEmpId] : null;
+  const weeklyLeader = Object.keys(weeklyTotals)
+    .map(empId => ({ empId, employee: employees[empId], kcal: weeklyTotals[empId] }))
+    .sort((a, b) => b.kcal - a.kcal)[0];
 
   // Department rankings
   const deptTotals: Record<string, number> = {};
@@ -576,9 +915,55 @@ CREATE TABLE submissions (
     .sort((a, b) => b.kcal - a.kcal);
 
   // Pending queue
-  const pendingQueue = submissions.filter(s => s.status === 'pending');
+  const pendingQueue = submissions.filter(s => s.status === 'pending' || s.requiresAdminReview);
   const reviewRequestCount = pendingQueue.filter(s => s.requiresAdminReview).length;
   const normalPendingCount = pendingQueue.length - reviewRequestCount;
+  const adminReviewRecords = [...submissions].sort((a, b) => b.id - a.id);
+  const unacknowledgedApprovedCount = adminReviewRecords.filter(s => s.status === 'approved' && !s.adminAcknowledged).length;
+  const dailySummaries = Object.values(adminReviewRecords.reduce<Record<string, {
+    date: string;
+    total: number;
+    approved: number;
+    pending: number;
+    rejected: number;
+    reviewRequested: number;
+    kcal: number;
+  }>>((acc, sub) => {
+    const date = sub.scannedDate || sub.timestamp.substring(0, 10);
+    if (!acc[date]) {
+      acc[date] = { date, total: 0, approved: 0, pending: 0, rejected: 0, reviewRequested: 0, kcal: 0 };
+    }
+    acc[date].total += 1;
+    acc[date][sub.status] += 1;
+    if (sub.requiresAdminReview) acc[date].reviewRequested += 1;
+    if (sub.status === 'approved') acc[date].kcal += sub.kcal;
+    return acc;
+  }, {})).sort((a, b) => b.date.localeCompare(a.date));
+  const normalizedAdminQuery = adminRecordQuery.trim().toLowerCase();
+  const filteredAdminRecords = adminReviewRecords.filter(sub => {
+    const matchesQuery = !normalizedAdminQuery || [
+      sub.empId,
+      sub.name,
+      sub.department,
+      sub.division,
+      sub.activityType
+    ].some(value => value.toLowerCase().includes(normalizedAdminQuery));
+    const matchesDate = !adminRecordDate || sub.scannedDate === adminRecordDate;
+    const matchesFilter =
+      adminRecordFilter === 'all' ||
+      (adminRecordFilter === 'needs_action' && (sub.status === 'pending' || sub.requiresAdminReview || (sub.status === 'approved' && !sub.adminAcknowledged))) ||
+      (adminRecordFilter === 'unacknowledged' && !sub.adminAcknowledged) ||
+      (adminRecordFilter === 'review_requested' && !!sub.requiresAdminReview) ||
+      sub.status === adminRecordFilter;
+
+    return matchesQuery && matchesDate && matchesFilter;
+  });
+  const adminRecordPageCount = Math.max(1, Math.ceil(filteredAdminRecords.length / ADMIN_RECORD_PAGE_SIZE));
+  const safeAdminRecordPage = Math.min(adminRecordPage, adminRecordPageCount);
+  const paginatedAdminRecords = filteredAdminRecords.slice(
+    (safeAdminRecordPage - 1) * ADMIN_RECORD_PAGE_SIZE,
+    safeAdminRecordPage * ADMIN_RECORD_PAGE_SIZE
+  );
 
   // Search Results
   const cleanSearchId = searchId.trim().toUpperCase();
@@ -648,32 +1033,22 @@ CREATE TABLE submissions (
               </nav>
             </div>
 
-            {/* ALERT BOX FOR MOCK STATUS */}
-            {dbService.isMock && (
-              <div className="mb-6 bg-[#C69214]/10 border border-[#C69214]/25 rounded-2xl p-4 flex items-center gap-3 text-xs text-[#72246C]">
-                <AlertCircle className="h-5 w-5 text-[#C69214] shrink-0" />
-                <div>
-                  <span className="font-bold">โหมดจำลองฐานข้อมูลในเครื่อง (LocalStorage Mode) กำลังทำงาน:</span> ข้อมูลทั้งหมดจะบันทึกอยู่ในเว็บเบราว์เซอร์นี้แบบออฟไลน์ คุณสามารถแก้ไขและทดสอบได้ฟรีโดยไม่มีค่าใช้จ่าย และหากพร้อมเชื่อมต่อฐานข้อมูล Supabase สามารถนำ URL/Key ไปใส่ในตัวแปรสภาพแวดล้อมได้ทันที
-                </div>
-              </div>
-            )}
-
             {/* TAB 1: EMPLOYEE SUBMISSION FORM */}
             {activeTab === 'employee-form' && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
                 <div className="lg:col-span-4 space-y-6">
-                  <div className="bg-gradient-to-br from-white via-white to-[#C69214]/10 border border-[#C69214]/20 p-6 rounded-2xl shadow-sm">
-                    <h2 className="text-lg font-bold text-[#C69214] mb-3 flex items-center gap-2">
-                      <Info className="h-4 w-4" /> 
-                      ลงทะเบียนส่งข้อมูลกิจกรรม
+                  <div className="bg-gradient-to-br from-white via-white to-[#C69214]/10 border border-[#C69214]/20 p-6 md:p-7 rounded-2xl shadow-sm">
+                    <h2 className="text-xl md:text-2xl font-bold text-[#C69214] mb-4 flex items-center gap-2.5 leading-tight">
+                      <Info className="h-5 w-5 shrink-0" /> 
+                      ข้อกำหนดการลงข้อมูลกิจกรรม
                     </h2>
-                    <ol className="space-y-2 text-xs text-[#72246C]/80 leading-relaxed list-decimal list-inside">
+                    <ol className="space-y-3 text-sm md:text-[15px] text-[#72246C]/85 leading-relaxed list-decimal list-inside">
                       <li>กรอกรหัสพนักงาน เลือกกิจกรรม แนบภาพหลักฐาน</li>
                       <li>ในรูปภาพต้องมีวันที่และเดือนระบุชัดเจน หากมีการออกกำลังกายมากกว่า 1 ครั้ง/วัน ให้ใช้รูปสรุปจำนวนแคลอรี่รวมทั้งหมดจากทุกช่วงเวลาในวันนั้น</li>
                       <li>ระบบจะเสนอค่า kcal ที่ตรวจพบจากภาพให้ตรวจอีกครั้ง หากตัวเลขไม่ตรงหรืออ่านไม่พบ ให้ส่งให้ผู้ดูแลตรวจและแก้ไขก่อนอนุมัติ</li>
                       <li>ไม่สามารถบันทึกข้อมูลการออกกำลังกายย้อนหลังได้ (บันทึกผลวันต่อวัน)</li>
                     </ol>
-                    <p className="mt-4 rounded-xl border border-[#C69214]/20 bg-white/70 p-3 text-xs text-[#72246C]/75 leading-relaxed">
+                    <p className="mt-5 text-sm text-[#72246C]/80 leading-relaxed">
                       ทั้งนี้ ในการลงข้อมูลหากตรวจสอบพบว่าการลงข้อมูลไม่ถูกต้องตามความเป็นจริงและไม่เป็นไปตามกติกา ขอสงวนสิทธิ์ในการลบข้อมูลออกจากระบบโดยมิต้องแจ้งให้ทราบล่วงหน้า
                     </p>
                   </div>
@@ -683,13 +1058,13 @@ CREATE TABLE submissions (
                   <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-[#C69214] to-[#72246C]"></div>
                   <h2 className="text-2xl font-bold text-[#72246C] mb-6 flex items-center gap-3">
                     <User className="h-6 w-6 text-[#C69214]" />
-                    ส่งผลการเผาผลาญพลังงานประจำวัน
+                    ลงข้อมูลการเผาผลาญพลังงานประจำวัน
                   </h2>
 
                   <form onSubmit={handleFormSubmit} className="space-y-6">
                     <div>
                       <label className="block text-sm font-semibold text-[#72246C]/80 mb-2">
-                        เลขรหัสพนักงาน (กรอกเพื่อทดสอบ: EMP1001 ถึง EMP1005)
+                        เลขรหัสพนักงาน
                       </label>
                       <div className="relative">
                         <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#72246C]/45">
@@ -700,20 +1075,23 @@ CREATE TABLE submissions (
                           required 
                           value={empIdInput}
                           onChange={(e) => setEmpIdInput(e.target.value)}
-                          placeholder="เช่น EMP1001, EMP1002..." 
+                          placeholder="000000" 
                           className="w-full bg-white border border-[#C69214]/20 focus:border-[#C69214] focus:ring-1 focus:ring-[#C69214] rounded-xl py-3 pl-11 pr-4 text-[#72246C] placeholder-[#72246C]/35 transition-all focus:outline-none"
                         />
                       </div>
                       {empIdInput.trim() && employees[empIdInput.trim().toUpperCase()] && (
-                        <p className="mt-2 text-xs text-[#C69214] flex items-center gap-1">
-                          <Check className="h-3 h-3" />
-                          พนักงาน: {employees[empIdInput.trim().toUpperCase()].name} | ฝ่าย: {employees[empIdInput.trim().toUpperCase()].department} ({employees[empIdInput.trim().toUpperCase()].division})
-                        </p>
+                        <div className="mt-2 rounded-lg border border-[#C69214]/20 bg-[#C69214]/10 px-3 py-2 text-xs text-[#72246C]">
+                          <p className="flex items-center gap-1 font-bold text-[#C69214]">
+                            <Check className="h-3 h-3" />
+                            พนักงาน: {employees[empIdInput.trim().toUpperCase()].name}
+                          </p>
+                          <p className="mt-1 text-[#72246C]/70">{getEmployeeOrgLabel(employees[empIdInput.trim().toUpperCase()])}</p>
+                        </div>
                       )}
                       {empIdInput.trim() && !employees[empIdInput.trim().toUpperCase()] && (
                         <p className="mt-2 text-xs text-rose-400 flex items-center gap-1">
                           <X className="h-3 h-3" />
-                          ไม่พบรหัสพนักงานนี้ในระบบแบบจำลอง
+                          ไม่พบรหัสพนักงานนี้ในระบบ กรุณาตรวจสอบรหัสหรือแจ้งผู้ดูแล
                         </p>
                       )}
                     </div>
@@ -796,8 +1174,8 @@ CREATE TABLE submissions (
                                 max="5000"
                                 value={confirmedKcal}
                                 readOnly
-                                placeholder="รอระบบตรวจ"
-                                className="bg-[#F8F3F8] text-2xl font-bold text-[#C69214] focus:outline-none w-36 border border-[#C69214]/20 rounded-lg px-3 py-1 cursor-not-allowed"
+                                placeholder="รอตรวจ"
+                                className="bg-[#F8F3F8] text-2xl font-bold text-[#C69214] placeholder:text-base placeholder:font-bold placeholder:text-[#C69214]/65 focus:outline-none w-36 border border-[#C69214]/20 rounded-lg px-3 py-1 cursor-not-allowed"
                               />
                               <span className="text-sm text-[#72246C]/65 font-mono">kcal</span>
                             </div>
@@ -820,6 +1198,15 @@ CREATE TABLE submissions (
                               </span>
                               {detectedKcal?.confidence === 'low' && (
                                 <p className="mt-1 text-[11px] text-[#72246C]/55">ความมั่นใจปานกลาง แนะนำให้ตรวจเทียบกับภาพ</p>
+                              )}
+                              {dateScan && (
+                                <p className={`mt-2 text-[11px] font-semibold ${dateScan.matchedToday ? 'text-[#C69214]' : 'text-rose-400'}`}>
+                                  {dateScan.matchedToday
+                                    ? `ตรวจพบวันที่ปัจจุบัน${dateScan.foundDateText ? ` (${dateScan.foundDateText})` : ''}`
+                                    : dateScan.foundDateText
+                                      ? `วันที่ในภาพไม่ใช่วันนี้ (${dateScan.foundDateText}) ระบบจะส่งให้ผู้ดูแลตรวจ`
+                                      : 'ยังไม่พบวันที่ชัดเจนในภาพ ระบบจะส่งให้ผู้ดูแลตรวจ'}
+                                </p>
                               )}
                             </div>
                           </div>
@@ -870,48 +1257,103 @@ CREATE TABLE submissions (
             {activeTab === 'company-dashboard' && (
               <div className="space-y-8 animate-fadeIn">
                 {/* TOP AGGREGATES CARDS */}
-                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                  <div className="bg-gradient-to-br from-[#C69214]/20 via-white to-white border border-[#C69214]/30 rounded-2xl p-6 relative overflow-hidden lg:col-span-2 group">
-                    <div className="absolute -right-4 -bottom-4 text-[#C69214]/5 text-9xl group-hover:scale-110 transition-transform">
-                      <Crown />
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="bg-white border border-[#C69214]/20 rounded-2xl p-6 relative overflow-hidden shadow-sm">
+                    <div className="flex items-center gap-2 text-sm text-[#72246C] font-bold">
+                      <Activity className="h-4 w-4 text-[#C69214]" />
+                      รวมพลังงานที่เหล่า Titan เผาผลาญ
                     </div>
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <span className="bg-[#C69214]/10 text-[#C69214] border border-[#C69214]/20 text-[10px] px-2.5 py-1 rounded-full font-bold uppercase tracking-wider flex items-center gap-1 w-fit">
-                          <Crown className="h-3.5 w-3.5" />
-                          แชมป์แคลอรี่สะสมสูงสุดสัปดาห์นี้
-                        </span>
-                        <h3 className="text-2xl font-extrabold text-[#72246C] mt-4">
-                          {topPerformer ? topPerformer.name : 'กำลังรอผลอนุมัติ'}
-                        </h3>
-                        <p className="text-xs text-[#72246C]/65 mt-1">
-                          สังกัด: {topPerformer ? `${topPerformer.department} (${topPerformer.division})` : '-'}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-xs text-[#72246C]/45 block font-mono">ยอดเผาผลาญสะสม</span>
-                        <span className="text-3xl font-black text-[#C69214] font-mono">
-                          {topKcal.toLocaleString()}
-                        </span>
-                        <span className="text-xs text-[#C69214] block font-semibold">kcal</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-white border border-[#C69214]/20 rounded-2xl p-6 relative overflow-hidden">
-                    <p className="text-sm text-[#72246C]/65 font-medium">รวมพลังงานองค์กรที่เผาผลาญ</p>
-                    <h3 className="text-3xl font-extrabold text-[#C69214] mt-2 font-mono">
+                    <h3 className="text-3xl font-extrabold text-[#C69214] mt-3 font-mono leading-none">
                       {totalKcal.toLocaleString()} kcal
                     </h3>
-                    <span className="text-xs text-[#72246C]/45">นับเฉพาะรายงานที่ได้รับการอนุมัติ</span>
+                    <span className="mt-2 block text-xs text-[#72246C]/50">นับเฉพาะรายงานที่ได้รับการอนุมัติ</span>
                   </div>
 
-                  <div className="bg-white border border-[#C69214]/20 rounded-2xl p-6 relative overflow-hidden">
-                    <p className="text-sm text-[#72246C]/65 font-medium">บุคลากรที่เข้าร่วมสุขภาพ</p>
-                    <h3 className="text-3xl font-extrabold text-[#C69214] mt-2 font-mono">
+                  <div className="bg-white border border-[#C69214]/20 rounded-2xl p-6 relative overflow-hidden shadow-sm">
+                    <div className="flex items-center gap-2 text-sm text-[#72246C] font-bold">
+                      <User className="h-4 w-4 text-[#C69214]" />
+                      เหล่า Titan ที่เข้าร่วมกิจกรรม
+                    </div>
+                    <h3 className="text-3xl font-extrabold text-[#C69214] mt-3 font-mono leading-none">
                       {activeUserCount} คน
                     </h3>
-                    <span className="text-xs text-[#72246C]/45">คนที่มีคะแนนอนุมัติแล้ว</span>
+                    <span className="mt-2 block text-xs text-[#72246C]/50">คนที่มีคะแนนอนุมัติแล้ว</span>
+                  </div>
+
+                  <div className="bg-white border border-[#C69214]/20 rounded-2xl p-6 relative overflow-hidden lg:col-span-2 shadow-sm">
+                    <div className="flex items-center justify-between gap-4 mb-5">
+                      <h3 className="text-lg font-bold text-[#72246C] flex items-center gap-2 m-0">
+                        <Crown className="h-5 w-5 text-[#C69214]" />
+                        Titan ที่แคลอรี่สะสมสูงสุดตลอดโครงการ
+                      </h3>
+                      <span className="text-[10px] bg-[#F8F3F8] text-[#72246C]/70 border border-[#C69214]/15 px-2 py-0.5 rounded-full font-bold">Top 3</span>
+                    </div>
+                    {allTimeLeaders.length === 0 ? (
+                      <p className="text-xs text-[#72246C]/45 text-center py-8 font-mono">ยังไม่มีข้อมูลคะแนนอนุมัติ</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {allTimeLeaders.map((leader, idx) => {
+                          const medalStyles = [
+                            'bg-[#C69214] text-white border-[#C69214]',
+                            'bg-[#D8DDE6] text-[#4B5563] border-[#C7CCD6]',
+                            'bg-[#B87333] text-white border-[#B87333]'
+                          ];
+                          const medalLabels = ['อันดับ 1', 'อันดับ 2', 'อันดับ 3'];
+                          return (
+                            <div key={leader.empId} className="rounded-xl border border-[#C69214]/15 bg-white px-4 py-3">
+                              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                <div className="flex min-w-0 items-center gap-3">
+                                  <div className={`h-9 w-9 shrink-0 rounded-full border flex items-center justify-center text-xs font-black ${medalStyles[idx]}`}>
+                                    {idx + 1}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                                      <span className="text-xs font-bold text-[#C69214]">{medalLabels[idx]}</span>
+                                      <h4 className="text-base md:text-lg font-black text-[#72246C] leading-tight m-0">{leader.employee?.name || leader.empId}</h4>
+                                      <span className="text-lg md:text-xl font-black text-[#C69214] font-mono">{leader.kcal.toLocaleString()} <span className="text-xs font-bold">kcal</span></span>
+                                    </div>
+                                    <p className="mt-1 text-xs text-[#72246C]/60 leading-relaxed">{leader.employee ? getEmployeeOrgLabel(leader.employee) : '-'}</p>
+                                  </div>
+                                </div>
+                                <Crown className={`h-5 w-5 shrink-0 ${
+                                  idx === 0 ? 'text-[#C69214]' : idx === 1 ? 'text-[#9CA3AF]' : 'text-[#B87333]'
+                                }`} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bg-white border border-[#C69214]/15 rounded-2xl p-4 relative overflow-hidden lg:col-span-2 shadow-sm">
+                    <div className="absolute -right-3 -bottom-4 text-[#C69214]/5 text-6xl">
+                      <Crown />
+                    </div>
+                    <div className="relative">
+                      <h3 className="text-sm font-bold text-[#72246C] flex items-center gap-2 m-0">
+                          <Crown className="h-4 w-4 text-[#C69214]" />
+                          Titan ที่แคลอรี่สะสมสูงสุดสัปดาห์นี้
+                      </h3>
+                      <div className="mt-3 flex min-w-0 items-center gap-3">
+                        <div className="h-9 w-9 shrink-0 rounded-full border border-[#C69214]/25 bg-[#C69214]/10 text-[#C69214] flex items-center justify-center">
+                          <Crown className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                            <span className="text-base md:text-lg font-black text-[#72246C]">
+                              {weeklyLeader?.employee ? weeklyLeader.employee.name : 'กำลังรอผลอนุมัติ'}
+                            </span>
+                            <span className="text-lg md:text-xl font-black text-[#C69214] font-mono">
+                              {(weeklyLeader?.kcal || 0).toLocaleString()} <span className="text-xs font-bold">kcal</span>
+                            </span>
+                          </div>
+                          <p className="text-xs text-[#72246C]/55 mt-1 mb-0">
+                            สังกัด: {weeklyLeader?.employee ? getEmployeeOrgLabel(weeklyLeader.employee) : '-'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -1039,7 +1481,7 @@ CREATE TABLE submissions (
                           </h4>
                           <p className="text-xs text-[#72246C]/45">
                             {searchEmployee 
-                              ? `ฝ่าย: ${searchEmployee.department} • กอง: ${searchEmployee.division}` 
+                              ? getEmployeeOrgLabel(searchEmployee) 
                               : 'กรอกรหัสพนักงานที่ต้องการสืบค้นข้อมูลด้านบน'}
                           </p>
                         </div>
@@ -1113,12 +1555,18 @@ CREATE TABLE submissions (
                       ระบบควบคุม: งานอนุมัติสถิติประจำวัน
                     </h2>
                     <p className="text-xs text-[#72246C]/65 mt-1 mb-0">
-                      ตรวจสอบความถูกต้องสอดคล้องของหลักฐานภาพนาฬิกา และตัดสินใจบันทึกคะแนนเข้าสู่ระบบส่วนกลาง
+                      ตรวจสอบรายการที่ผู้ใช้ขอให้แก้ไข และทวนสอบข้อมูลที่ระบบอนุมัติอัตโนมัติพร้อมรูปหลักฐานย้อนหลัง
                     </p>
                     {reviewRequestCount > 0 && (
                       <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-[#FFF0C2] border border-[#C69214]/35 px-3 py-1.5 text-xs font-bold text-[#72246C]">
                         <AlertCircle className="h-3.5 w-3.5 text-[#C69214]" />
                         มี {reviewRequestCount} รายการที่ผู้ใช้ขอให้ตรวจสอบค่า kcal
+                      </div>
+                    )}
+                    {unacknowledgedApprovedCount > 0 && (
+                      <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-[#F8F3F8] border border-[#72246C]/15 px-3 py-1.5 text-xs font-bold text-[#72246C]">
+                        <Info className="h-3.5 w-3.5 text-[#C69214]" />
+                        มี {unacknowledgedApprovedCount} รายการอนุมัติอัตโนมัติที่รอรับทราบ
                       </div>
                     )}
                   </div>
@@ -1128,7 +1576,7 @@ CREATE TABLE submissions (
                       className="px-4 py-2.5 bg-[#C69214] hover:bg-[#B58112] text-[#2A0D27] font-bold text-xs rounded-xl shadow-lg shadow-[#C69214]/10 transition-colors flex items-center gap-1.5"
                     >
                       <Check className="h-4 w-4 stroke-[3]" />
-                      <span>อนุมัติรายการทั่วไป ({normalPendingCount})</span>
+                      <span>อนุมัติคิวตรวจ ({normalPendingCount})</span>
                     </button>
                     <button
                       type="button"
@@ -1138,6 +1586,53 @@ CREATE TABLE submissions (
                       <LogOut className="h-4 w-4" />
                       ออกจากระบบ
                     </button>
+                  </div>
+                </div>
+
+                <div className="mb-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  <div className="lg:col-span-2 rounded-2xl border border-[#C69214]/20 bg-gradient-to-br from-[#FFF7E2] via-white to-white p-5">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div>
+                        <h3 className="text-lg font-bold text-[#72246C] flex items-center gap-2 m-0">
+                          <User className="h-5 w-5 text-[#C69214]" />
+                          จัดการรายชื่อพนักงานในสังกัด
+                        </h3>
+                        <p className="mt-2 text-sm text-[#72246C]/70 leading-relaxed">
+                          อัปโหลดไฟล์ XLSX, XLS, CSV หรือ TSV จาก Excel/Google Sheet เพื่อให้ระบบจับคู่ข้อมูลกิจกรรมผ่านรหัสพนักงาน
+                        </p>
+                      </div>
+                      <label className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition-colors ${
+                        employeeUploadLoading
+                          ? 'bg-[#72246C]/20 text-[#72246C]/45 cursor-wait'
+                          : 'bg-[#72246C] text-white hover:bg-[#5E1D59] cursor-pointer'
+                      }`}>
+                        {employeeUploadLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
+                        {employeeUploadLoading ? 'กำลังนำเข้า...' : 'อัปโหลดรายชื่อ'}
+                        <input
+                          type="file"
+                          accept=".xlsx,.xls,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values"
+                          onChange={handleEmployeeRosterUpload}
+                          disabled={employeeUploadLoading}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                    <div className="mt-4 rounded-xl border border-[#C69214]/20 bg-white/70 p-3">
+                      <p className="text-xs font-bold text-[#C69214] mb-2">หัวตารางที่ต้องใช้</p>
+                      <p className="text-xs text-[#72246C]/70 leading-relaxed break-words">
+                        {EMPLOYEE_IMPORT_HEADERS.join(' | ')}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-[#C69214]/20 bg-white p-5">
+                    <p className="text-sm text-[#72246C]/65 font-semibold">จำนวนพนักงานในระบบ</p>
+                    <p className="mt-2 text-3xl font-black text-[#C69214] font-mono">
+                      {Object.keys(employees).length.toLocaleString()}
+                    </p>
+                    <p className="mt-1 text-xs text-[#72246C]/45">
+                      ใช้ตรวจสอบรหัสก่อนบันทึกกิจกรรม
+                    </p>
                   </div>
                 </div>
 
@@ -1178,7 +1673,7 @@ CREATE TABLE submissions (
                                 )}
                               </div>
                               <div className="text-xs text-[#72246C]/65 font-mono">
-                                {sub.empId} • {sub.department} ({sub.division})
+                                {sub.empId} • ฝ่าย: {sub.department} • กอง: {sub.division}
                               </div>
                             </td>
                             <td className="py-4 px-4 text-[#72246C]/80">
@@ -1188,14 +1683,20 @@ CREATE TABLE submissions (
                               </div>
                             </td>
                             <td className="py-4 px-4">
-                              <a 
-                                href={sub.imageUrl} 
-                                target="_blank" 
-                                rel="noreferrer"
-                                className="block w-16 h-12 rounded-lg overflow-hidden border border-[#C69214]/20 hover:scale-150 hover:border-[#C69214] transition-all cursor-zoom-in relative bg-white"
-                              >
-                                <img src={sub.imageUrl} className="w-full h-full object-contain" alt="Verification proof" />
-                              </a>
+                              {isTemporaryBlobUrl(sub.imageUrl) ? (
+                                <div className="w-16 h-12 rounded-lg border border-rose-200 bg-rose-50 text-[10px] text-rose-400 flex items-center justify-center text-center px-1">
+                                  รูปเดิมหมดอายุ
+                                </div>
+                              ) : (
+                                <a 
+                                  href={sub.imageUrl} 
+                                  target="_blank" 
+                                  rel="noreferrer"
+                                  className="block w-16 h-12 rounded-lg overflow-hidden border border-[#C69214]/20 hover:scale-150 hover:border-[#C69214] transition-all cursor-zoom-in relative bg-white"
+                                >
+                                  <img src={sub.imageUrl} className="w-full h-full object-contain" alt="Verification proof" />
+                                </a>
+                              )}
                             </td>
                             <td className="py-4 px-4">
                               <div className="flex items-center gap-2">
@@ -1244,6 +1745,273 @@ CREATE TABLE submissions (
                       )}
                     </tbody>
                   </table>
+                </div>
+
+                <div className="mt-8 border-t border-[#C69214]/20 pt-6 space-y-6">
+                  <div>
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                      <div>
+                        <h3 className="text-lg font-bold text-[#72246C] flex items-center gap-2 m-0">
+                          <Calendar className="h-5 w-5 text-[#C69214]" />
+                          สรุปรายวัน
+                        </h3>
+                        <p className="text-xs text-[#72246C]/60 mt-1 mb-0">
+                          ดูภาพรวมก่อนเจาะรายการ ลดภาระจากการไล่ดูทีละ record เมื่อข้อมูลมีจำนวนมาก
+                        </p>
+                      </div>
+                      <span className="rounded-full border border-[#C69214]/20 bg-[#C69214]/10 px-3 py-1 text-xs font-bold text-[#72246C]">
+                        {adminReviewRecords.length.toLocaleString()} รายการทั้งหมด
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                      {dailySummaries.length === 0 ? (
+                        <div className="rounded-2xl border border-[#C69214]/15 bg-white p-5 text-center text-sm text-[#72246C]/45">
+                          ยังไม่มีข้อมูลสรุปรายวัน
+                        </div>
+                      ) : (
+                        dailySummaries.slice(0, 12).map(day => (
+                          <button
+                            key={day.date}
+                            type="button"
+                            onClick={() => {
+                              setAdminRecordDate(day.date);
+                              setAdminRecordFilter('all');
+                              setAdminRecordPage(1);
+                            }}
+                            className="rounded-2xl border border-[#C69214]/15 bg-white p-4 text-left hover:border-[#C69214]/45 hover:bg-[#FFF7E2]/35 transition-colors"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="font-black text-[#72246C]">{day.date}</span>
+                              <span className="text-xs font-bold text-[#C69214]">{day.total} รายการ</span>
+                            </div>
+                            <div className="mt-3 grid grid-cols-4 gap-2 text-[11px]">
+                              <span className="rounded-lg bg-[#C69214]/10 px-2 py-1 text-[#72246C]">อนุมัติ {day.approved}</span>
+                              <span className="rounded-lg bg-[#F8F3F8] px-2 py-1 text-[#72246C]">รอตรวจ {day.pending}</span>
+                              <span className="rounded-lg bg-rose-500/10 px-2 py-1 text-rose-500">ปฏิเสธ {day.rejected}</span>
+                              <span className="rounded-lg bg-[#FFF0C2] px-2 py-1 text-[#8A6500]">ขอตรวจ {day.reviewRequested}</span>
+                            </div>
+                            <p className="mt-3 text-xs text-[#72246C]/55">
+                              kcal อนุมัติรวม <span className="font-bold text-[#C69214] font-mono">{day.kcal.toLocaleString()}</span>
+                            </p>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                      <div>
+                        <h3 className="text-lg font-bold text-[#72246C] flex items-center gap-2 m-0">
+                          <Search className="h-5 w-5 text-[#C69214]" />
+                          ค้นหาและตรวจสอบย้อนหลัง
+                        </h3>
+                        <p className="text-xs text-[#72246C]/60 mt-1 mb-0">
+                          ค่าเริ่มต้นแสดงเฉพาะงานที่ต้องติดตาม หากต้องการดูทั้งหมดให้เลือกตัวกรอง “ทั้งหมด”
+                        </p>
+                      </div>
+                      <span className="rounded-full border border-[#C69214]/20 bg-[#F8F3F8] px-3 py-1 text-xs font-bold text-[#72246C]">
+                        พบ {filteredAdminRecords.length.toLocaleString()} รายการ
+                      </span>
+                    </div>
+
+                    <div className="mb-4 grid grid-cols-1 md:grid-cols-4 gap-3 rounded-2xl border border-[#C69214]/15 bg-white p-4">
+                      <div className="md:col-span-2">
+                        <label className="block text-xs font-bold text-[#72246C]/70 mb-1">ค้นหา</label>
+                        <input
+                          type="text"
+                          value={adminRecordQuery}
+                          onChange={(e) => {
+                            setAdminRecordQuery(e.target.value);
+                            setAdminRecordPage(1);
+                          }}
+                          placeholder="รหัส / ชื่อ / ฝ่าย / กอง / กิจกรรม"
+                          className="w-full rounded-xl border border-[#C69214]/20 bg-white px-3 py-2 text-sm text-[#72246C] focus:outline-none focus:border-[#C69214]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-[#72246C]/70 mb-1">วันที่กิจกรรม</label>
+                        <input
+                          type="date"
+                          value={adminRecordDate}
+                          onChange={(e) => {
+                            setAdminRecordDate(e.target.value);
+                            setAdminRecordPage(1);
+                          }}
+                          className="w-full rounded-xl border border-[#C69214]/20 bg-white px-3 py-2 text-sm text-[#72246C] focus:outline-none focus:border-[#C69214]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-[#72246C]/70 mb-1">ตัวกรอง</label>
+                        <select
+                          value={adminRecordFilter}
+                          onChange={(e) => {
+                            setAdminRecordFilter(e.target.value as typeof adminRecordFilter);
+                            setAdminRecordPage(1);
+                          }}
+                          className="w-full rounded-xl border border-[#C69214]/20 bg-white px-3 py-2 text-sm font-bold text-[#72246C] focus:outline-none focus:border-[#C69214]"
+                        >
+                          <option value="needs_action">งานที่ต้องติดตาม</option>
+                          <option value="review_requested">ผู้ใช้ขอให้ตรวจ</option>
+                          <option value="unacknowledged">รอรับทราบ</option>
+                          <option value="pending">รอตรวจ</option>
+                          <option value="approved">อนุมัติ</option>
+                          <option value="rejected">ปฏิเสธ</option>
+                          <option value="all">ทั้งหมด</option>
+                        </select>
+                      </div>
+                      <div className="md:col-span-4 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAdminRecordQuery('');
+                            setAdminRecordDate('');
+                            setAdminRecordFilter('needs_action');
+                            setAdminRecordPage(1);
+                          }}
+                          className="rounded-xl border border-[#C69214]/20 bg-white px-4 py-2 text-xs font-bold text-[#72246C] hover:bg-[#F8F3F8]"
+                        >
+                          ล้างตัวกรอง
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto rounded-2xl border border-[#C69214]/15">
+                    <table className="w-full min-w-[980px] text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-[#C69214]/15 text-[#72246C]/65 text-xs bg-[#72246C]/5 font-semibold">
+                          <th className="py-3 px-4">พนักงาน / วันที่</th>
+                          <th className="py-3 px-4">กิจกรรม</th>
+                          <th className="py-3 px-4">รูปหลักฐาน</th>
+                          <th className="py-3 px-4">Kcal</th>
+                          <th className="py-3 px-4">สถานะ</th>
+                          <th className="py-3 px-4">การทวนสอบ</th>
+                          <th className="py-3 px-4 text-center">จัดการข้อมูล</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#C69214]/15 text-sm">
+                        {paginatedAdminRecords.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="py-10 text-center text-[#72246C]/45">
+                              ไม่พบข้อมูลตามตัวกรอง
+                            </td>
+                          </tr>
+                        ) : (
+                          paginatedAdminRecords.map(sub => {
+                            const statusValue = adminStatusEdits[sub.id] ?? sub.status;
+                            return (
+                              <tr key={`record-${sub.id}`} className={sub.adminAcknowledged ? 'bg-white' : 'bg-[#FFF7E2]/35'}>
+                                <td className="py-3 px-4">
+                                  <div className="font-bold text-[#72246C]">{sub.name}</div>
+                                  <div className="text-xs text-[#72246C]/55">{sub.empId} • {sub.timestamp}</div>
+                                  <div className="text-[11px] text-[#72246C]/45">ฝ่าย: {sub.department} • กอง: {sub.division}</div>
+                                </td>
+                                <td className="py-3 px-4 text-[#72246C]/80">{sub.activityType}</td>
+                                <td className="py-3 px-4">
+                                  {isTemporaryBlobUrl(sub.imageUrl) ? (
+                                    <div className="h-14 w-20 rounded-lg border border-rose-200 bg-rose-50 text-[10px] text-rose-400 flex items-center justify-center text-center px-1">
+                                      รูปเดิมหมดอายุ
+                                    </div>
+                                  ) : (
+                                    <a
+                                      href={sub.imageUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="block h-14 w-20 overflow-hidden rounded-lg border border-[#C69214]/20 bg-white hover:border-[#C69214]"
+                                    >
+                                      <img src={sub.imageUrl} className="h-full w-full object-contain" alt="หลักฐานกิจกรรม" />
+                                    </a>
+                                  )}
+                                </td>
+                                <td className="py-3 px-4">
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      max="5000"
+                                      value={adminKcalEdits[sub.id] ?? String(sub.kcal)}
+                                      onChange={(e) => setAdminKcalEdits(prev => ({ ...prev, [sub.id]: e.target.value }))}
+                                      className="w-24 rounded-lg border border-[#C69214]/25 bg-white px-2 py-1.5 text-base font-bold font-mono text-[#C69214] focus:outline-none focus:border-[#C69214]"
+                                      aria-label={`แก้ไข kcal ของรายการ ${sub.id}`}
+                                    />
+                                    <span className="text-xs text-[#72246C]/45">kcal</span>
+                                  </div>
+                                </td>
+                                <td className="py-3 px-4">
+                                  <select
+                                    value={statusValue}
+                                    onChange={(e) => setAdminStatusEdits(prev => ({ ...prev, [sub.id]: e.target.value as Submission['status'] }))}
+                                    className="rounded-lg border border-[#C69214]/25 bg-white px-2 py-1.5 text-xs font-bold text-[#72246C] focus:outline-none focus:border-[#C69214]"
+                                  >
+                                    <option value="approved">อนุมัติ</option>
+                                    <option value="pending">รอตรวจ</option>
+                                    <option value="rejected">ปฏิเสธ</option>
+                                  </select>
+                                </td>
+                                <td className="py-3 px-4">
+                                  <div className="space-y-1">
+                                    {sub.requiresAdminReview && (
+                                      <span className="inline-flex rounded-full bg-[#C69214] px-2 py-0.5 text-[10px] font-bold text-white">ผู้ใช้ขอให้ตรวจ</span>
+                                    )}
+                                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                      sub.adminAcknowledged
+                                        ? 'bg-[#72246C]/10 text-[#72246C]/70'
+                                        : 'bg-[#FFF0C2] text-[#8A6500] border border-[#C69214]/25'
+                                    }`}>
+                                      {sub.adminAcknowledged ? 'รับทราบแล้ว' : 'รอรับทราบ'}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="py-3 px-4">
+                                  <div className="flex flex-wrap justify-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveSubmissionRecord(sub)}
+                                      className="rounded-lg bg-[#72246C] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#5E1D59]"
+                                    >
+                                      บันทึกแก้ไข
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAcknowledgeSubmission(sub)}
+                                      className="rounded-lg bg-[#C69214] px-3 py-1.5 text-xs font-bold text-[#2A0D27] hover:bg-[#B58112]"
+                                    >
+                                      รับทราบ
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                    </div>
+                    <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs text-[#72246C]/60">
+                      <span>
+                        หน้า {safeAdminRecordPage.toLocaleString()} / {adminRecordPageCount.toLocaleString()} แสดงสูงสุด {ADMIN_RECORD_PAGE_SIZE} รายการต่อหน้า
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={safeAdminRecordPage <= 1}
+                          onClick={() => setAdminRecordPage(page => Math.max(1, page - 1))}
+                          className="rounded-lg border border-[#C69214]/20 px-3 py-1.5 font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#F8F3F8]"
+                        >
+                          ก่อนหน้า
+                        </button>
+                        <button
+                          type="button"
+                          disabled={safeAdminRecordPage >= adminRecordPageCount}
+                          onClick={() => setAdminRecordPage(page => Math.min(adminRecordPageCount, page + 1))}
+                          className="rounded-lg border border-[#C69214]/20 px-3 py-1.5 font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#F8F3F8]"
+                        >
+                          ถัดไป
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
               ) : (
@@ -1344,9 +2112,16 @@ CREATE TABLE submissions (
                         <span className="text-[#72246C]/45">-- ตารางข้อมูลสังกัดและชื่อพนักงาน</span><br />
                         <span className="text-[#C69214]">CREATE TABLE</span> employees (<br />
                         &nbsp;&nbsp;&nbsp;&nbsp;emp_id <span className="text-[#72246C]">VARCHAR(50) PRIMARY KEY</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;prefix <span className="text-[#72246C]">VARCHAR(50)</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;first_name <span className="text-[#72246C]">VARCHAR(255) NOT NULL</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;last_name <span className="text-[#72246C]">VARCHAR(255) NOT NULL</span>,<br />
                         &nbsp;&nbsp;&nbsp;&nbsp;name <span className="text-[#72246C]">VARCHAR(255) NOT NULL</span>,<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;department <span className="text-[#72246C]">VARCHAR(255) NOT NULL</span>,<br />
-                        &nbsp;&nbsp;&nbsp;&nbsp;division <span className="text-[#72246C]">VARCHAR(255) NOT NULL</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;position <span className="text-[#72246C]">VARCHAR(255)</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;workline <span className="text-[#72246C]">VARCHAR(255)</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;office <span className="text-[#72246C]">VARCHAR(255)</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;department <span className="text-[#72246C]">VARCHAR(255)</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;division <span className="text-[#72246C]">VARCHAR(255)</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;section <span className="text-[#72246C]">VARCHAR(255)</span>,<br />
                         &nbsp;&nbsp;&nbsp;&nbsp;created_at <span className="text-[#72246C]">TIMESTAMP WITH TIME ZONE DEFAULT NOW()</span><br />
                         );
                       </div>
@@ -1361,6 +2136,7 @@ CREATE TABLE submissions (
                         &nbsp;&nbsp;&nbsp;&nbsp;image_hash <span className="text-[#72246C]">VARCHAR(64) NOT NULL</span>,<br />
                         &nbsp;&nbsp;&nbsp;&nbsp;scanned_date <span className="text-[#72246C]">DATE NOT NULL</span>,<br />
                         &nbsp;&nbsp;&nbsp;&nbsp;review_requested <span className="text-[#72246C]">BOOLEAN DEFAULT false</span>,<br />
+                        &nbsp;&nbsp;&nbsp;&nbsp;admin_acknowledged <span className="text-[#72246C]">BOOLEAN DEFAULT false</span>,<br />
                         &nbsp;&nbsp;&nbsp;&nbsp;status <span className="text-[#72246C]">VARCHAR(50) DEFAULT 'pending'</span>,<br />
                         &nbsp;&nbsp;&nbsp;&nbsp;created_at <span className="text-[#72246C]">TIMESTAMP WITH TIME ZONE DEFAULT NOW()</span><br />
                         );

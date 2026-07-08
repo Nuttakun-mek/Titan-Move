@@ -5,6 +5,8 @@ PEA Titan Move is a React + TypeScript + Vite prototype for collecting and appro
 The app currently supports:
 
 - Employee activity submission with image upload, silent kcal detection, and admin correction
+- Admin employee roster import from XLSX/XLS/CSV/TSV using Thai HR headers
+- Auto-approval for normal submissions with admin post-review, correction, and acknowledgement
 - Duplicate image detection with SHA-256 hashing
 - LocalStorage mock database mode
 - Optional Supabase integration for employees, submissions, and evidence image storage

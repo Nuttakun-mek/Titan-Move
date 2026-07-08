@@ -11,11 +11,11 @@ const supabase = isSupabaseConfigured
 
 // Initial mock employees
 const INITIAL_EMPLOYEES: Record<string, Employee> = {
-  "EMP1001": { empId: "EMP1001", name: "สมชาย รักดี", department: "เทคโนโลยีสารสนเทศ", division: "พัฒนาซอฟต์แวร์" },
-  "EMP1002": { empId: "EMP1002", name: "สมศรี ใจงาม", department: "ทรัพยากรบุคคล", division: "สรรหาบุคลากร" },
-  "EMP1003": { empId: "EMP1003", name: "วันชัย กล้าหาญ", department: "ฝ่ายขาย", division: "พัฒนาธุรกิจ" },
-  "EMP1004": { empId: "EMP1004", name: "นภา ดาราเพ็ญ", department: "การตลาด", division: "ประชาสัมพันธ์" },
-  "EMP1005": { empId: "EMP1005", name: "วิทยา ใฝ่รู้", department: "เทคโนโลยีสารสนเทศ", division: "โครงสร้างพื้นฐาน" }
+  "EMP1001": { empId: "EMP1001", prefix: "นาย", firstName: "สมชาย", lastName: "รักดี", name: "นายสมชาย รักดี", position: "นักระบบงาน", workline: "สายงานเทคโนโลยี", office: "สำนักดิจิทัล", department: "เทคโนโลยีสารสนเทศ", division: "พัฒนาซอฟต์แวร์", section: "ระบบงาน" },
+  "EMP1002": { empId: "EMP1002", prefix: "นางสาว", firstName: "สมศรี", lastName: "ใจงาม", name: "นางสาวสมศรี ใจงาม", position: "บุคลากร", workline: "สายงานบริหาร", office: "สำนักทรัพยากรบุคคล", department: "ทรัพยากรบุคคล", division: "สรรหาบุคลากร", section: "ทะเบียนประวัติ" },
+  "EMP1003": { empId: "EMP1003", prefix: "นาย", firstName: "วันชัย", lastName: "กล้าหาญ", name: "นายวันชัย กล้าหาญ", position: "นักการตลาด", workline: "สายงานธุรกิจ", office: "สำนักการตลาด", department: "ฝ่ายขาย", division: "พัฒนาธุรกิจ", section: "ลูกค้าองค์กร" },
+  "EMP1004": { empId: "EMP1004", prefix: "นาง", firstName: "นภา", lastName: "ดาราเพ็ญ", name: "นางนภา ดาราเพ็ญ", position: "นักประชาสัมพันธ์", workline: "สายงานสื่อสารองค์กร", office: "สำนักสื่อสารองค์กร", department: "การตลาด", division: "ประชาสัมพันธ์", section: "กิจกรรมองค์กร" },
+  "EMP1005": { empId: "EMP1005", prefix: "นาย", firstName: "วิทยา", lastName: "ใฝ่รู้", name: "นายวิทยา ใฝ่รู้", position: "วิศวกร", workline: "สายงานเทคโนโลยี", office: "สำนักดิจิทัล", department: "เทคโนโลยีสารสนเทศ", division: "โครงสร้างพื้นฐาน", section: "เครือข่าย" }
 };
 
 // Initial mock submissions
@@ -29,8 +29,15 @@ const INITIAL_SUBMISSIONS: Submission[] = [
 export interface Employee {
   empId: string;
   name: string;
+  prefix: string;
+  firstName: string;
+  lastName: string;
+  position: string;
+  workline: string;
+  office: string;
   department: string;
   division: string;
+  section: string;
 }
 
 export interface Submission {
@@ -47,7 +54,13 @@ export interface Submission {
   timestamp: string;
   imageHash?: string;
   requiresAdminReview?: boolean;
+  adminAcknowledged?: boolean;
 }
+
+export type EmployeeImportResult = {
+  count: number;
+  target: 'supabase' | 'local';
+};
 
 // Helpers for LocalStorage Mock DB
 const getLocalSubmissions = (): Submission[] => {
@@ -63,6 +76,19 @@ const saveLocalSubmissions = (submissions: Submission[]) => {
   localStorage.setItem('fitverify_submissions', JSON.stringify(submissions));
 };
 
+const getLocalEmployees = (): Record<string, Employee> => {
+  const data = localStorage.getItem('fitverify_employees');
+  if (!data) {
+    localStorage.setItem('fitverify_employees', JSON.stringify(INITIAL_EMPLOYEES));
+    return INITIAL_EMPLOYEES;
+  }
+  return JSON.parse(data);
+};
+
+const saveLocalEmployees = (employees: Record<string, Employee>) => {
+  localStorage.setItem('fitverify_employees', JSON.stringify(employees));
+};
+
 export const dbService = {
   isMock: !isSupabaseConfigured,
 
@@ -73,11 +99,21 @@ export const dbService = {
         if (error) throw error;
         const result: Record<string, Employee> = {};
         data?.forEach((row: any) => {
+          const prefix = row.prefix || '';
+          const firstName = row.first_name || '';
+          const lastName = row.last_name || '';
           result[row.emp_id] = {
             empId: row.emp_id,
-            name: row.name,
-            department: row.department,
-            division: row.division
+            prefix,
+            firstName,
+            lastName,
+            name: row.name || `${prefix}${firstName} ${lastName}`.trim() || row.emp_id,
+            position: row.position || '',
+            workline: row.workline || row.work_line || '',
+            office: row.office || '',
+            department: row.department || '',
+            division: row.division || '',
+            section: row.section || ''
           };
         });
         // If Supabase table is empty, return initial mock list as default
@@ -90,7 +126,47 @@ export const dbService = {
         return INITIAL_EMPLOYEES;
       }
     }
-    return INITIAL_EMPLOYEES;
+    return getLocalEmployees();
+  },
+
+  async upsertEmployees(importedEmployees: Employee[]): Promise<EmployeeImportResult> {
+    const normalized = importedEmployees.map(emp => ({
+      ...emp,
+      empId: emp.empId.trim().toUpperCase(),
+      name: emp.name.trim() || `${emp.prefix}${emp.firstName} ${emp.lastName}`.trim()
+    })).filter(emp => emp.empId);
+
+    if (supabase) {
+      try {
+        const rows = normalized.map(emp => ({
+          emp_id: emp.empId,
+          prefix: emp.prefix,
+          first_name: emp.firstName,
+          last_name: emp.lastName,
+          name: emp.name,
+          position: emp.position,
+          workline: emp.workline,
+          office: emp.office,
+          department: emp.department,
+          division: emp.division,
+          section: emp.section
+        }));
+        const { error } = await supabase.from('employees').upsert(rows, { onConflict: 'emp_id' });
+        if (error) throw error;
+        return { count: normalized.length, target: 'supabase' };
+      } catch (err) {
+        console.error('Supabase upsertEmployees error:', err);
+        const message = err instanceof Error ? err.message : 'ไม่สามารถบันทึกรายชื่อเข้า Supabase ได้';
+        throw new Error(`บันทึกเข้า Supabase ไม่สำเร็จ: ${message}`);
+      }
+    }
+
+    const local = getLocalEmployees();
+    normalized.forEach(emp => {
+      local[emp.empId] = emp;
+    });
+    saveLocalEmployees(local);
+    return { count: normalized.length, target: 'local' };
   },
 
   async getSubmissions(): Promise<Submission[]> {
@@ -110,7 +186,8 @@ export const dbService = {
           scannedDate: row.scanned_date || row.submission_date,
           status: row.status,
           timestamp: new Date(row.created_at || row.submission_date).toISOString().replace('T', ' ').substring(0, 16),
-          requiresAdminReview: row.review_requested ?? row.requires_admin_review ?? false
+          requiresAdminReview: row.review_requested ?? row.requires_admin_review ?? false,
+          adminAcknowledged: row.admin_acknowledged ?? false
         })) || [];
       } catch (err) {
         console.error('Supabase getSubmissions error, falling back to local:', err);
@@ -150,7 +227,8 @@ export const dbService = {
             image_hash: sub.imageHash || 'none',
             scanned_date: sub.scannedDate,
             status: sub.status,
-            review_requested: sub.requiresAdminReview || false
+            review_requested: sub.requiresAdminReview || false,
+            admin_acknowledged: sub.adminAcknowledged || false
           }
         ]).select().single();
 
@@ -168,7 +246,8 @@ export const dbService = {
           scannedDate: data.scanned_date,
           status: data.status,
           timestamp: new Date(data.created_at).toISOString().replace('T', ' ').substring(0, 16),
-          requiresAdminReview: data.review_requested ?? sub.requiresAdminReview ?? false
+          requiresAdminReview: data.review_requested ?? sub.requiresAdminReview ?? false,
+          adminAcknowledged: data.admin_acknowledged ?? sub.adminAcknowledged ?? false
         };
       } catch (err) {
         console.error('Supabase createSubmission error, falling back to local:', err);
@@ -226,6 +305,32 @@ export const dbService = {
     if (idx !== -1) {
       local[idx].kcal = kcal;
       local[idx].requiresAdminReview = requiresAdminReview;
+      saveLocalSubmissions(local);
+      return true;
+    }
+    return false;
+  },
+
+  async updateSubmission(id: number, updates: Partial<Pick<Submission, 'kcal' | 'status' | 'requiresAdminReview' | 'adminAcknowledged'>>): Promise<boolean> {
+    if (supabase) {
+      try {
+        const payload: Record<string, unknown> = {};
+        if (updates.kcal !== undefined) payload.kcal = updates.kcal;
+        if (updates.status !== undefined) payload.status = updates.status;
+        if (updates.requiresAdminReview !== undefined) payload.review_requested = updates.requiresAdminReview;
+        if (updates.adminAcknowledged !== undefined) payload.admin_acknowledged = updates.adminAcknowledged;
+        const { error } = await supabase.from('submissions').update(payload).eq('id', id);
+        if (error) throw error;
+        return true;
+      } catch (err) {
+        console.error('Supabase updateSubmission error, falling back to local:', err);
+      }
+    }
+
+    const local = getLocalSubmissions();
+    const idx = local.findIndex(s => s.id === id);
+    if (idx !== -1) {
+      local[idx] = { ...local[idx], ...updates };
       saveLocalSubmissions(local);
       return true;
     }
